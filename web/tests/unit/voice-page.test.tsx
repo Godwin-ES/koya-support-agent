@@ -22,10 +22,12 @@ interface HookValue {
   callerText: string;
   agentText: string;
   fullTranscript: TranscriptTurn[];
+  partial: TranscriptTurn | null;
   endOfCallSummary: EndOfCallSummary | null;
   remainingSeconds: number | null;
   startCall: () => void;
   endCall: () => void;
+  subscribeToVolume: (listener: (volume: number) => void) => () => void;
 }
 
 async function renderAtState(callState: CallState, overrides: Partial<HookValue> = {}) {
@@ -40,10 +42,12 @@ function baseHookValue(callState: CallState): HookValue {
     callerText: "",
     agentText: "",
     fullTranscript: [],
+    partial: null,
     endOfCallSummary: null,
     remainingSeconds: null,
     startCall: vi.fn(),
     endCall: vi.fn(),
+    subscribeToVolume: () => () => {},
   };
 }
 

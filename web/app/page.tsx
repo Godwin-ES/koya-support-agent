@@ -18,5 +18,6 @@ export default async function VoicePage() {
   } = await supabase.auth.getSession();
   if (!session) redirect("/sign-in");
 
-  return <VoicePageClient accessToken={session.access_token} onSignOut={signOut} />;
+  const name = session.user.user_metadata?.name;
+  return <VoicePageClient accessToken={session.access_token} onSignOut={signOut} userName={typeof name === "string" && name.trim() ? name : null} userEmail={session.user.email ?? null} />;
 }

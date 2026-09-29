@@ -7,8 +7,9 @@ import type { CallState } from "@core/domain/call-actions";
 // Confirmed against docs.vapi.ai/sdk/web (Task 10): 'speech-start'/'speech-end'
 // mark the assistant speaking (not the caller), and a transcript arrives as
 // a 'message' event shaped { type: 'transcript', role, transcript,
-// transcriptType: 'partial' | 'final' } - only 'final' transcripts are kept,
-// so captions don't flicker with every partial word.
+// transcriptType: 'partial' | 'final' }. Finals go into the transcript;
+// the latest partial is kept separately so the page can show words as
+// they're spoken without the transcript itself flickering.
 interface TranscriptMessage {
   type: "transcript";
   role: "user" | "assistant";
@@ -30,6 +31,8 @@ export interface EndOfCallSummary {
   followUpSummary: string | null;
   /** Set when useVoiceCall itself ended the call after 30s of caller silence, rather than the caller hanging up (SYSTEM-DESIGN.md §9 - Vapi has no such field itself, confirmed against its live API in Task 13, so this is enforced client-side). */
   endedDueToSilence: boolean;
+  /** How long the call was connected, when it connected at all. */
+  durationSeconds?: number | null;
 }
 
 /** SYSTEM-DESIGN.md §9: the two client-visible call limits. Vapi enforces `MAX_CALL_SECONDS` itself server-side (`maxDurationSeconds` on the assistant) - this is only the matching visual countdown. `SILENCE_TIMEOUT_MS` has no Vapi-side equivalent at all (verified against its live API, Task 13) and is enforced entirely here. */
@@ -44,6 +47,7 @@ export function useVoiceCall(accessToken: string) {
   const [fullTranscript, setFullTranscript] = useState<TranscriptTurn[]>([]);
   const [endOfCallSummary, setEndOfCallSummary] = useState<EndOfCallSummary | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
+  const [partial, setPartial] = useState<TranscriptTurn | null>(null);
 
   const vapiRef = useRef<Vapi | null>(null);
   const conversationRef = useRef<{ id: string; token: string } | null>(null);
@@ -51,6 +55,9 @@ export function useVoiceCall(accessToken: string) {
   const callStartedAtRef = useRef<number>(0);
   const endedDueToSilenceRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Volume arrives many times a second - listeners are called directly so
+  // the orb can animate without re-rendering the whole page.
+  const volumeListenersRef = useRef(new Set<(volume: number) => void>());
 
   const getVapi = useCallback((): Vapi => {
     if (!vapiRef.current) {
@@ -78,10 +85,15 @@ export function useVoiceCall(accessToken: string) {
         // when it escalates, so the last assistant transcript line already
         // carries it - no separate authenticated fetch needed to show it.
         setAgentText((lastAgentLine) => {
-          setEndOfCallSummary({ followUpSummary: lastAgentLine || null, endedDueToSilence: endedDueToSilenceRef.current });
+          const durationSeconds = callStartedAtRef.current ? Math.round((Date.now() - callStartedAtRef.current) / 1000) : null;
+          setEndOfCallSummary({ followUpSummary: lastAgentLine || null, endedDueToSilence: endedDueToSilenceRef.current, durationSeconds });
           return lastAgentLine;
         });
+        setPartial(null);
         setCallState((s) => (s === "ending" ? "ended" : "dropped"));
+      });
+      vapi.on("volume-level", (volume: number) => {
+        for (const listener of volumeListenersRef.current) listener(volume);
       });
       vapi.on("error", (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -92,8 +104,15 @@ export function useVoiceCall(accessToken: string) {
         setCallState((s) => (s === "requesting" || s === "connecting" ? "unavailable" : "dropped"));
       });
       vapi.on("message", (message: unknown) => {
-        if (!isTranscriptMessage(message) || message.transcriptType !== "final") return;
+        if (!isTranscriptMessage(message)) return;
+        // A partial means someone is mid-sentence, so it counts as activity
+        // too - otherwise a long caller sentence could trip the silence timeout.
         lastActivityAtRef.current = Date.now();
+        if (message.transcriptType !== "final") {
+          setPartial({ role: message.role, text: message.transcript });
+          return;
+        }
+        setPartial(null);
         if (message.role === "user") setCallerText(message.transcript);
         else setAgentText(message.transcript);
         setFullTranscript((prev) => [...prev, { role: message.role, text: message.transcript }]);
@@ -110,7 +129,9 @@ export function useVoiceCall(accessToken: string) {
     setFullTranscript([]);
     setEndOfCallSummary(null);
     setRemainingSeconds(null);
+    setPartial(null);
     endedDueToSilenceRef.current = false;
+    callStartedAtRef.current = 0;
 
     let res: Response;
     try {
@@ -193,5 +214,12 @@ export function useVoiceCall(accessToken: string) {
     [],
   );
 
-  return { callState, callerText, agentText, fullTranscript, endOfCallSummary, remainingSeconds, startCall, endCall };
+  const subscribeToVolume = useCallback((listener: (volume: number) => void) => {
+    volumeListenersRef.current.add(listener);
+    return () => {
+      volumeListenersRef.current.delete(listener);
+    };
+  }, []);
+
+  return { callState, callerText, agentText, fullTranscript, partial, endOfCallSummary, remainingSeconds, startCall, endCall, subscribeToVolume };
 }

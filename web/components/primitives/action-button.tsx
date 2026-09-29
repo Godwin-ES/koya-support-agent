@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useEffect, useId, useRef, useState } from "react";
+import { forwardRef, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import type { ActionState } from "@core/domain/action-state";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,8 @@ export interface ActionButtonProps {
   confirm?: { title: string; description: string; confirmLabel?: string; destructive?: boolean };
   variant?: "primary" | "secondary" | "danger" | "ghost";
   className?: string;
+  /** Decorative leading icon; replaced by the spinner while pending. */
+  icon?: ReactNode;
   /** A stable identifier for tests, independent of the visible label (which changes with `state.label`, e.g. "Start call" -> "Connecting…"). */
   "data-testid"?: string;
 }
@@ -46,7 +48,7 @@ const VARIANT_CLASSES: Record<NonNullable<ActionButtonProps["variant"]>, string>
  * idempotency key across retries of one intent, the visible
  * disabled-reason tooltip (plus `aria-describedby`), and confirmation.
  */
-export const ActionButton = forwardRef<HTMLButtonElement, ActionButtonProps>(function ActionButton({ action, idleLabel, pendingLabel, state, onError, onSuccess, confirm, variant = "primary", className, "data-testid": dataTestId }, forwardedRef) {
+export const ActionButton = forwardRef<HTMLButtonElement, ActionButtonProps>(function ActionButton({ action, idleLabel, pendingLabel, state, onError, onSuccess, confirm, variant = "primary", className, icon, "data-testid": dataTestId }, forwardedRef) {
   const [isPending, setIsPending] = useState(false);
   const [showPendingLabel, setShowPendingLabel] = useState(false);
   const [showProgressiveFeedback, setShowProgressiveFeedback] = useState(false);
@@ -142,7 +144,7 @@ export const ActionButton = forwardRef<HTMLButtonElement, ActionButtonProps>(fun
           className,
         )}
       >
-        {isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+        {isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : icon}
         <span>{label}</span>
       </button>
       {disabledReason && (

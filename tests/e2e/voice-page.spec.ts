@@ -161,8 +161,42 @@ test("keyboard: Start call and End call are reachable and activate with Enter", 
 test("axe: the voice page has no automatically detectable accessibility violations", async ({ page }) => {
   await interceptConversations(page, 200, { conversation_id: "conv-1", token: "tok-1" });
   await signInAndGoHome(page);
+  await settleAnimations(page);
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
+});
+
+// Entrance animations fade messages in from opacity 0 - axe sampling one mid-fade
+// reports a contrast failure the settled page doesn't have. Looping ambient
+// animations (the orb, the live dot) never finish, so only finite ones count.
+async function settleAnimations(page: Page) {
+  await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getTiming().iterations === Infinity));
+}
+
+test("axe: the live call transcript and the text chat have no automatically detectable accessibility violations", async ({ page }) => {
+  await interceptConversations(page, 200, { conversation_id: "conv-1", token: "tok-1" });
+  await page.route("**/__stub_agent_server__/api/text", (route) => route.fulfill({ status: 200, contentType: "text/event-stream", body: 'data: {"text":"Fees depend on the corridor."}\n\ndata: [DONE]\n\n' }));
+  await signInAndGoHome(page);
+
+  await page.getByTestId("start-call").click();
+  await page.evaluate(() => {
+    const vapi = (window as unknown as { __VAPI_STUB__: { emit: (event: string, ...args: unknown[]) => void } }).__VAPI_STUB__;
+    vapi.emit("call-start");
+    vapi.emit("message", { type: "transcript", role: "user", transcript: "What are your fees?", transcriptType: "final" });
+    vapi.emit("message", { type: "transcript", role: "assistant", transcript: "Fees depend on the corridor.", transcriptType: "final" });
+    vapi.emit("message", { type: "transcript", role: "user", transcript: "And for Ghana", transcriptType: "partial" });
+  });
+  await expect(page.getByRole("log", { name: "Call transcript" })).toContainText("Fees depend on the corridor.");
+  await settleAnimations(page);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+
+  await page.getByRole("button", { name: "End call" }).click();
+  await page.getByRole("button", { name: "Type instead" }).click();
+  await page.getByLabel("Type a message").fill("What are your fees?");
+  await page.getByLabel("Type a message").press("Enter");
+  await expect(page.getByText("Fees depend on the corridor.")).toBeVisible();
+  await settleAnimations(page);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
 test("phone layout (Task 14 audit): the voice page works at a phone viewport, no horizontal scroll", async ({ page }) => {
