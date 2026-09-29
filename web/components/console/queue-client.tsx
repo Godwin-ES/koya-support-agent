@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { deriveCaseActions } from "@core/domain/case-actions";
 import { TICKET_STATUS, ESCALATION_STATUS } from "@core/domain/status";
 import type { CaseItem } from "@/lib/server/console-data";
@@ -40,51 +41,61 @@ export function QueueClient({ initialCases }: { initialCases: CaseItem[] }) {
 
   return (
     <div className="flex gap-6">
-      <table className="w-full flex-1 border-collapse text-sm">
-        <thead className="text-left text-xs text-[var(--color-text-muted)]">
-          <tr>
-            <th className="border-b border-[var(--color-border)] py-2 pr-4">Type</th>
-            <th className="border-b border-[var(--color-border)] py-2 pr-4">Category</th>
-            <th className="border-b border-[var(--color-border)] py-2 pr-4">Status</th>
-            <th className="border-b border-[var(--color-border)] py-2 pr-4">Summary</th>
-            <th className="border-b border-[var(--color-border)] py-2 pr-4">Age</th>
-          </tr>
-        </thead>
-        <tbody>
-          {cases.map((item) => {
-            const registry = item.kind === "ticket" ? TICKET_STATUS : ESCALATION_STATUS;
-            return (
-              <tr key={item.id} className="cursor-pointer hover:bg-[var(--color-surface-2)]" onClick={() => router.push(`/console/queue?case=${item.id}`)}>
-                <td className="border-b border-[var(--color-border)] py-2 pr-4 capitalize">{item.kind}</td>
-                <td className="border-b border-[var(--color-border)] py-2 pr-4">{item.category}</td>
-                <td className="border-b border-[var(--color-border)] py-2 pr-4">
-                  <StatusBadge entry={registry[item.status]} />
-                </td>
-                <td className="max-w-xs truncate border-b border-[var(--color-border)] py-2 pr-4">{item.summary}</td>
-                <td className="border-b border-[var(--color-border)] py-2 pr-4">{formatAge(item.created_at)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="min-w-0 flex-1 overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-sm)]">
+        <table className="w-full border-collapse text-sm">
+          <thead className="bg-[var(--color-surface-2)] text-left text-xs font-medium tracking-wide text-[var(--color-text-muted)]">
+            <tr>
+              <th className="border-b border-[var(--color-border)] px-3 py-2.5">Type</th>
+              <th className="border-b border-[var(--color-border)] px-3 py-2.5">Category</th>
+              <th className="border-b border-[var(--color-border)] px-3 py-2.5">Status</th>
+              <th className="border-b border-[var(--color-border)] px-3 py-2.5">Summary</th>
+              <th className="border-b border-[var(--color-border)] px-3 py-2.5">Age</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cases.map((item) => {
+              const registry = item.kind === "ticket" ? TICKET_STATUS : ESCALATION_STATUS;
+              const isOpen = item.id === openCaseId;
+              return (
+                <tr
+                  key={item.id}
+                  className={cn(
+                    "cursor-pointer border-l-2 [transition:background-color_var(--transition-fast),border-color_var(--transition-fast)]",
+                    isOpen ? "border-[var(--color-accent)] bg-[var(--color-surface-hover)]" : "border-transparent hover:bg-[var(--color-surface-hover)]",
+                  )}
+                  onClick={() => router.push(`/console/queue?case=${item.id}`)}
+                >
+                  <td className="border-b border-[var(--color-border)] px-3 py-2.5 capitalize">{item.kind}</td>
+                  <td className="border-b border-[var(--color-border)] px-3 py-2.5 text-[var(--color-text-muted)]">{item.category}</td>
+                  <td className="border-b border-[var(--color-border)] px-3 py-2.5">
+                    <StatusBadge entry={registry[item.status]} />
+                  </td>
+                  <td className="max-w-[220px] truncate border-b border-[var(--color-border)] px-3 py-2.5">{item.summary}</td>
+                  <td className="border-b border-[var(--color-border)] px-3 py-2.5 text-[var(--color-text-muted)]">{formatAge(item.created_at)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
       {openCase && (
-        <aside aria-label="Case detail" className="w-80 flex-shrink-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+        <aside aria-label="Case detail" className="w-80 flex-shrink-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[var(--shadow-md)]">
           <div className="flex items-start justify-between">
             <h2 className="text-sm font-semibold capitalize">{openCase.kind}</h2>
-            <button type="button" onClick={() => router.back()} className="text-xs text-[var(--color-accent)] hover:underline">
+            <button type="button" onClick={() => router.back()} className="text-xs font-medium text-[var(--color-accent)] [transition:opacity_var(--transition-fast)] hover:opacity-80 hover:underline">
               Back
             </button>
           </div>
-          <StatusBadge entry={(openCase.kind === "ticket" ? TICKET_STATUS : ESCALATION_STATUS)[openCase.status]} className="mt-2" />
-          <p className="mt-2 text-sm">{openCase.summary}</p>
+          <StatusBadge entry={(openCase.kind === "ticket" ? TICKET_STATUS : ESCALATION_STATUS)[openCase.status]} className="mt-3" />
+          <p className="mt-3 text-sm text-[var(--color-text)]">{openCase.summary}</p>
           {openCase.callback_time && <p className="mt-1 text-xs text-[var(--color-text-muted)]">Callback: {new Date(openCase.callback_time).toLocaleString()}</p>}
           {conflictMessage && (
             <p role="alert" className="mt-2 text-xs text-[var(--color-danger-text)]">
               {conflictMessage}
             </p>
           )}
-          <div className="mt-3 flex flex-col gap-2">
+          <div className="mt-4 flex flex-col gap-2">
             {(() => {
               const actions = deriveCaseActions(openCase.status);
               return (

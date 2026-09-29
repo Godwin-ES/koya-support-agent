@@ -35,48 +35,56 @@ export function VoicePageClient({ accessToken, onSignOut }: { accessToken: strin
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col items-center gap-6 px-6 py-10 text-center">
+    <main className="mx-auto flex min-h-screen max-w-md flex-col items-center px-6 py-10 text-center">
       <h1 className="sr-only">RelayPay Support</h1>
-      <Wordmark />
-      <p className="text-sm text-[var(--color-text-muted)]">Ask about payments, payouts, invoices or your account.</p>
-      {callLimit && callState === "idle" && (
-        <p className="text-xs text-[var(--color-text-muted)]">
-          {callLimit.used} of {callLimit.limit} calls used today
-        </p>
-      )}
 
-      {textMode ? (
-        <TextFallback accessToken={accessToken} onSwitchToVoice={() => setTextMode(false)} />
-      ) : (
-        <>
-          <ActionButton action={handleStart} idleLabel="Start call" pendingLabel="Connecting…" state={actions.startCall} variant="primary" className="px-8 py-3 text-base" data-testid="start-call" />
-          <ActionButton action={async () => endCall()} idleLabel="End call" pendingLabel="Ending…" state={actions.endCall} variant="secondary" data-testid="end-call" />
+      <div className="flex flex-col items-center gap-2 pt-6">
+        <Wordmark className="text-xl" />
+        <p className="text-sm text-[var(--color-text-muted)]">Ask about payments, payouts, invoices or your account.</p>
+        {callLimit && callState === "idle" && (
+          <p className="text-xs text-[var(--color-text-muted)]">
+            {callLimit.used} of {callLimit.limit} calls used today
+          </p>
+        )}
+      </div>
 
-          <LiveIndicator statusWord={actions.statusLine} active={isActive} />
+      <div className="flex flex-1 flex-col items-center justify-center gap-5 py-10">
+        {textMode ? (
+          <TextFallback accessToken={accessToken} onSwitchToVoice={() => setTextMode(false)} />
+        ) : (
+          <>
+            <div className="flex items-center gap-3">
+              <ActionButton action={handleStart} idleLabel="Start call" pendingLabel="Connecting…" state={actions.startCall} variant="primary" className="px-8 py-3 text-base" data-testid="start-call" />
+              <ActionButton action={async () => endCall()} idleLabel="End call" pendingLabel="Ending…" state={actions.endCall} variant="secondary" data-testid="end-call" />
+            </div>
 
-          {isActive && remainingSeconds !== null && (
-            <p className="text-xs text-[var(--color-text-muted)]" aria-live="off">
-              {formatMmSs(remainingSeconds)} remaining
-            </p>
-          )}
+            <LiveIndicator statusWord={actions.statusLine} active={isActive} />
 
-          {callState === "ended" && endOfCallSummary ? <EndOfCallSummary summary={endOfCallSummary} /> : <Captions callerText={callerText} agentText={agentText} fullTranscript={fullTranscript} />}
+            {isActive && remainingSeconds !== null && (
+              <p className="text-xs text-[var(--color-text-muted)]" aria-live="off">
+                {formatMmSs(remainingSeconds)} remaining
+              </p>
+            )}
 
-          {!hasStartedBefore && callState === "idle" && <p className="text-xs text-[var(--color-text-muted)]">Your browser will ask for microphone access when you start a call.</p>}
+            {callState === "ended" && endOfCallSummary ? <EndOfCallSummary summary={endOfCallSummary} /> : <Captions callerText={callerText} agentText={agentText} fullTranscript={fullTranscript} />}
 
-          <ActionButton action={async () => setTextMode(true)} idleLabel="Type instead" state={actions.typeInstead} variant="ghost" className="text-xs" />
-        </>
-      )}
+            {!hasStartedBefore && callState === "idle" && <p className="max-w-xs text-xs text-[var(--color-text-muted)]">Your browser will ask for microphone access when you start a call.</p>}
 
-      {callState === "idle" && (
-        <form action={onSignOut}>
-          <button type="submit" className="text-xs text-[var(--color-text-muted)] hover:underline">
-            Sign out
-          </button>
-        </form>
-      )}
+            <ActionButton action={async () => setTextMode(true)} idleLabel="Type instead" state={actions.typeInstead} variant="ghost" className="text-xs" />
+          </>
+        )}
+      </div>
 
-      <PrivacyNote />
+      <div className="flex flex-col items-center gap-3 pb-2">
+        {callState === "idle" && (
+          <form action={onSignOut}>
+            <button type="submit" className="text-xs text-[var(--color-text-muted)] [transition:color_var(--transition-fast)] hover:text-[var(--color-text)] hover:underline">
+              Sign out
+            </button>
+          </form>
+        )}
+        <PrivacyNote />
+      </div>
     </main>
   );
 }

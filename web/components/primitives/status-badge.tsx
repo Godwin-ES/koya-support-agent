@@ -19,7 +19,7 @@ export function StatusBadge({ entry, className }: { entry: StatusEntry; classNam
   const Icon = (Icons as unknown as Record<string, Icons.LucideIcon>)[entry.icon];
 
   return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium", TONE_CLASSES[entry.tone], className)}>
+    <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ring-black/5", TONE_CLASSES[entry.tone], className)}>
       {Icon && <Icon className={cn("h-3.5 w-3.5", entry.icon === "Loader2" && "animate-spin motion-reduce:animate-none")} aria-hidden="true" />}
       {entry.label}
     </span>

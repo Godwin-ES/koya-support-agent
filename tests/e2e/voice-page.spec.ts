@@ -36,7 +36,7 @@ async function signInAndGoHome(page: Page) {
   await page.goto("/sign-in");
   await page.getByLabel("Email").fill(CALLER_EMAIL);
   await page.getByLabel("Password").fill(CALLER_PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL((url) => url.pathname === "/");
 }
 

@@ -30,21 +30,28 @@ export function ConfirmDialog({ open, title, description, confirmLabel = "Confir
       }}
     >
       <AlertDialog.Portal>
-        <AlertDialog.Backdrop className="fixed inset-0 bg-black/40" />
+        <AlertDialog.Backdrop className="fixed inset-0 bg-black/40 [transition:opacity_var(--transition-fast)] data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
         <AlertDialog.Popup
-          className={cn("fixed left-1/2 top-1/2 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-[var(--radius-lg)] border p-6 shadow-lg", "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]")}
+          className={cn(
+            "fixed left-1/2 top-1/2 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-[var(--radius-lg)] border p-6 shadow-[var(--shadow-lg)]",
+            "[transition:opacity_var(--transition-fast),transform_var(--transition-fast)] data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0",
+            "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]",
+          )}
         >
           <AlertDialog.Title className="text-base font-semibold">{title}</AlertDialog.Title>
           <AlertDialog.Description className="mt-2 text-sm text-[var(--color-text-muted)]">{description}</AlertDialog.Description>
           <div className="mt-6 flex justify-end gap-2">
-            <button type="button" onClick={onCancel} className="rounded-[var(--radius-md)] px-4 py-2 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            <button type="button" onClick={onCancel} className="rounded-[var(--radius-md)] px-4 py-2 text-sm font-medium text-[var(--color-text)] [transition:background-color_var(--transition-fast)] hover:bg-[var(--color-surface-2)]">
               {cancelLabel}
             </button>
             <button
               type="button"
               onClick={onConfirm}
               autoFocus
-              className={cn("rounded-[var(--radius-md)] px-4 py-2 text-sm font-medium", destructive ? "bg-[var(--color-danger-text)] text-white hover:opacity-90" : "bg-[var(--color-accent)] text-[var(--color-accent-contrast)] hover:opacity-90")}
+              className={cn(
+                "rounded-[var(--radius-md)] px-4 py-2 text-sm font-medium shadow-[var(--shadow-sm)] [transition:background-color_var(--transition-fast),opacity_var(--transition-fast)]",
+                destructive ? "bg-[var(--color-danger-text)] text-white hover:opacity-90" : "bg-[var(--color-accent)] text-[var(--color-accent-contrast)] hover:bg-[var(--color-accent-hover)]",
+              )}
             >
               {confirmLabel}
             </button>

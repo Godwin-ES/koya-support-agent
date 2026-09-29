@@ -27,7 +27,7 @@ export function TextFallback({ accessToken, onSwitchToVoice }: { accessToken: st
 
   if (isEnded) {
     return (
-      <div role="status" className="w-full max-w-md rounded-[var(--radius-md)] bg-[var(--color-surface-2)] p-4 text-center text-sm text-[var(--color-text)]">
+      <div role="status" className="w-full max-w-md rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-center text-sm text-[var(--color-text)] shadow-[var(--shadow-sm)]">
         Thanks for chatting. If you need more help, start a new call or conversation.
       </div>
     );
@@ -35,7 +35,7 @@ export function TextFallback({ accessToken, onSwitchToVoice }: { accessToken: st
 
   return (
     <div className="flex w-full max-w-md flex-col gap-3">
-      <div aria-live="polite" className="max-h-72 space-y-2 overflow-y-auto rounded-[var(--radius-md)] border border-[var(--color-border)] p-3 text-sm">
+      <div aria-live="polite" className="max-h-72 space-y-2 overflow-y-auto rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm shadow-[var(--shadow-sm)]">
         {turns.length === 0 && <p className="text-[var(--color-text-muted)]">Ask about payments, payouts, invoices or your account.</p>}
         {turns.map((turn, index) => (
           <p key={index}>
@@ -51,7 +51,7 @@ export function TextFallback({ accessToken, onSwitchToVoice }: { accessToken: st
         placeholder="Type a message"
         aria-label="Type a message"
         rows={2}
-        className="w-full resize-none rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+        className="w-full resize-none rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm [transition:border-color_var(--transition-fast)] focus-visible:border-[var(--color-accent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
       />
       <div className="flex justify-between gap-2">
         <ActionButton action={handleSend} idleLabel="Send" state={actions.send} variant="primary" />

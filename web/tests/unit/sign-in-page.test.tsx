@@ -1,5 +1,5 @@
-// The public sign-in page (Task 13/14): the real sign-in form plus the
-// "Continue as demo reviewer" panel - a one-click way in for a grader,
+// The public sign-in page (Task 13/14): the real sign-in form plus a
+// "Sign in with demo account" button - a one-click way in for a grader,
 // with no form fields of its own. Actions are mocked (no live Supabase
 // call, $0), matching how voice-page.test.tsx mocks hooks.
 import { describe, expect, it, vi } from "vitest";
@@ -27,7 +27,7 @@ describe("sign-in page", () => {
     const user = userEvent.setup();
     render(<SignInPage />);
 
-    const demoButton = screen.getByRole("button", { name: /continue as demo reviewer/i });
+    const demoButton = screen.getByRole("button", { name: /sign in with demo account/i });
     expect(demoButton).toBeInTheDocument();
     await user.click(demoButton);
     expect(mockDemoSignIn).toHaveBeenCalled();

@@ -22,27 +22,27 @@ export function Captions({ callerText, agentText, fullTranscript }: CaptionsProp
 
   return (
     <div className="w-full max-w-md">
-      <div aria-live="polite" className="space-y-2 rounded-[var(--radius-md)] bg-[var(--color-surface-2)] p-4 text-sm">
+      <div aria-live="polite" className="space-y-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm shadow-[var(--shadow-sm)]">
         {callerText && (
-          <p>
-            <span className="font-medium text-[var(--color-text-muted)]">You: </span>
+          <p className="text-[var(--color-text-muted)]">
+            <span className="font-medium">You: </span>
             {callerText}
           </p>
         )}
         {agentText && (
-          <p>
+          <p className="text-[var(--color-text)]">
             <span className="font-medium text-[var(--color-text-muted)]">RelayPay: </span>
             {agentText}
           </p>
         )}
       </div>
       {fullTranscript.length > 2 && (
-        <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-2 text-xs font-medium text-[var(--color-accent)] hover:underline" aria-expanded={expanded}>
+        <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-2 text-xs font-medium text-[var(--color-accent)] [transition:opacity_var(--transition-fast)] hover:opacity-80 hover:underline" aria-expanded={expanded}>
           {expanded ? "Hide full transcript" : "Show full transcript"}
         </button>
       )}
       {expanded && (
-        <ul className="mt-2 max-h-64 space-y-1 overflow-y-auto rounded-[var(--radius-md)] border border-[var(--color-border)] p-3 text-xs">
+        <ul className="mt-2 max-h-64 space-y-1 overflow-y-auto rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-xs">
           {fullTranscript.map((turn, index) => (
             <li key={index}>
               <span className="font-medium text-[var(--color-text-muted)]">{turn.role === "user" ? "You" : "RelayPay"}: </span>

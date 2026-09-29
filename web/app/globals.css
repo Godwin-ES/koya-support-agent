@@ -56,6 +56,16 @@
   --shadow-sm: 0 1px 2px rgb(26 34 51 / 0.06);
   --shadow-md: 0 2px 8px rgb(26 34 51 / 0.08);
   --shadow-lg: 0 8px 24px rgb(26 34 51 / 0.12);
+
+  /* One timing for every micro-interaction (hover lift, focus, pending
+     transitions) - a single value keeps them all reading as the same
+     restrained motion language rather than ad hoc durations, and stays
+     well under §11.10's 200ms ceiling. */
+  --transition-fast: 150ms ease-out;
+  /* A hover background one step past --color-surface-2/-3, so a hovered
+     row or card reads as "lifted" rather than "selected" (selection/
+     active state already uses -2/-3 elsewhere). */
+  --color-surface-hover: #eaedf1;
 }
 
 body {

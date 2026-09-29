@@ -26,10 +26,14 @@ export interface ActionButtonProps {
   "data-testid"?: string;
 }
 
+// Shadow + a 1px hover lift on the two "does something" variants (primary,
+// danger) gives them real weight without any new color - restrained on
+// purpose (brand-direction.md: "avoid anything playful, flashy"). Ghost
+// and secondary stay flat; they're deliberately the quieter choice.
 const VARIANT_CLASSES: Record<NonNullable<ActionButtonProps["variant"]>, string> = {
-  primary: "bg-[var(--color-accent)] text-[var(--color-accent-contrast)] hover:opacity-90",
-  secondary: "bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-surface-3)]",
-  danger: "bg-[var(--color-danger-text)] text-white hover:opacity-90",
+  primary: "bg-[var(--color-accent)] text-[var(--color-accent-contrast)] shadow-[var(--shadow-sm)] hover:bg-[var(--color-accent-hover)] hover:shadow-[var(--shadow-md)] hover:-translate-y-px active:translate-y-0 active:shadow-[var(--shadow-sm)]",
+  secondary: "border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-surface-3)]",
+  danger: "bg-[var(--color-danger-text)] text-white shadow-[var(--shadow-sm)] hover:opacity-90 hover:shadow-[var(--shadow-md)] hover:-translate-y-px active:translate-y-0 active:shadow-[var(--shadow-sm)]",
   ghost: "bg-transparent text-[var(--color-text)] hover:bg-[var(--color-surface-2)]",
 };
 
@@ -130,9 +134,10 @@ export const ActionButton = forwardRef<HTMLButtonElement, ActionButtonProps>(fun
         title={disabledReason}
         data-testid={dataTestId}
         className={cn(
-          "inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] px-4 py-2 text-sm font-medium transition-colors",
+          "inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] px-4 py-2 text-sm font-medium",
+          "[transition-property:background-color,box-shadow,transform,opacity] [transition-duration:var(--transition-fast)]",
           "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]",
-          "disabled:cursor-not-allowed disabled:opacity-50",
+          "disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none",
           VARIANT_CLASSES[variant],
           className,
         )}

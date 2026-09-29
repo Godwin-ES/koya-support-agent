@@ -1,4 +1,4 @@
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, Inbox, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ActionButton } from "./action-button";
 
@@ -21,10 +21,11 @@ export interface EmptyStateProps {
 /** "Says what would be here and offers the next action" - never a bare "No data". */
 export function EmptyState({ message, action }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center gap-3 rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] px-6 py-10 text-center">
-      <p className="text-sm text-[var(--color-text-muted)]">{message}</p>
+    <div className="flex flex-col items-center gap-3 rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] px-6 py-12 text-center">
+      <Inbox className="h-5 w-5 text-[var(--color-text-muted)]" aria-hidden="true" />
+      <p className="max-w-sm text-sm text-[var(--color-text-muted)]">{message}</p>
       {action && (
-        <button type="button" onClick={action.onClick} className="text-sm font-medium text-[var(--color-accent)] hover:underline">
+        <button type="button" onClick={action.onClick} className="text-sm font-medium text-[var(--color-accent)] [transition:opacity_var(--transition-fast)] hover:opacity-80 hover:underline">
           {action.label}
         </button>
       )}
@@ -40,9 +41,9 @@ export interface ErrorStateProps {
 /** What failed, why, and what to do next - with Retry. */
 export function ErrorState({ message, onRetry }: ErrorStateProps) {
   return (
-    <div role="alert" className="flex flex-col items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger-border)] bg-[var(--color-danger-bg)] px-6 py-8 text-center">
+    <div role="alert" className="flex flex-col items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger-border)] bg-[var(--color-danger-bg)] px-6 py-8 text-center shadow-[var(--shadow-sm)]">
       <AlertTriangle className="h-5 w-5 text-[var(--color-danger-text)]" aria-hidden="true" />
-      <p className="text-sm text-[var(--color-danger-text)]">{message}</p>
+      <p className="max-w-sm text-sm text-[var(--color-danger-text)]">{message}</p>
       <ActionButton action={onRetry} idleLabel="Retry" variant="secondary" />
     </div>
   );

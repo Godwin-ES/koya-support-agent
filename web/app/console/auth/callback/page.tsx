@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Wordmark } from "@/components/brand/wordmark";
+import { Loader2 } from "lucide-react";
+import { AuthShell } from "@/components/auth/auth-shell";
 import { completeInvite } from "./actions";
 
 /**
@@ -34,19 +35,21 @@ export default function ConsoleAuthCallbackPage() {
   }, []);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center gap-4 px-6 text-center">
-      <Wordmark />
+    <AuthShell title="Joining the console">
       {error ? (
-        <p role="alert" className="text-sm text-[var(--color-danger-text)]">
+        <p role="alert" className="text-center text-sm text-[var(--color-danger-text)]">
           That invite link is missing or expired. Ask for a new one, or{" "}
-          <a href="/console/sign-in" className="text-[var(--color-accent)] hover:underline">
+          <a href="/console/sign-in" className="font-medium text-[var(--color-accent)] hover:underline">
             sign in
           </a>
           .
         </p>
       ) : (
-        <p className="text-sm text-[var(--color-text-muted)]">Signing you in…</p>
+        <p role="status" className="flex items-center justify-center gap-2 text-sm text-[var(--color-text-muted)]">
+          <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          Signing you in…
+        </p>
       )}
-    </main>
+    </AuthShell>
   );
 }
