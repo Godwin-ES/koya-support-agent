@@ -9,22 +9,26 @@ tickets or hands off to a human when it should.
 
 ## Try it in two minutes
 
-1. Open the link and choose **Sign in with demo account**. Access is
-   otherwise by invitation.
+1. Open the link and choose one of the **sample customers** on the sign-in
+   page (one click, no password). Each customer sees only their own
+   account, transactions and payouts. **Sign in with demo account** is for
+   general questions only. Access is otherwise by invitation.
 2. Press the call button and allow the microphone, or choose **Type
-   instead**.
-3. Try any of these (all from the seed data):
+   instead**. The agent greets you by name.
+3. Try any of these:
 
-| Say or type | What should happen |
-|---|---|
-| "What fees do you charge for international payments?" | Answers from the knowledge base; fees vary and are shown before you confirm |
-| "My payment is stuck." | Asks which kind of payment, and for its reference |
-| "I'm Amara from LagosLedger, can you check my account?" | Verifies with two identifiers, then gives only safe account details |
-| "Can you check transaction TXN-9001?" (after the line above) | Looks it up and gives the record's own status |
-| "I'm Efua from AccraStack. What's happening with payout PAY-7002?" | Finds it needs compliance review; escalates and books a callback |
-| "My invoice payment failed and I need someone to look at it." | Asks for the reference, then logs a support ticket |
-| "Can you guarantee my payout arrives by 9am tomorrow?" | Declines the guarantee; gives the usual 2-5 business days |
+| Signed in as | Say or type | What should happen |
+|---|---|---|
+| anyone | "What fees do you charge for international payments?" | Answers from the knowledge base; fees vary and are shown before you confirm |
+| Amara Okafor | "My payment is stuck." | Asks which kind of payment, and for its reference |
+| Amara Okafor | "Can you check my account?" | Her own account: active, Growth plan |
+| Amara Okafor | "Can you check transaction TXN-9001?" | Her transaction: processing, within the normal window |
+| Amara Okafor | "I'm Efua from AccraStack. What's happening with payout PAY-7002?" | Refused - Amara can't see another customer's records |
+| Efua Mensah | "What's happening with payout PAY-7002?" | Needs compliance review; escalates and books a callback, using her account's name and email |
+| Patrick Ndayisaba | "My invoice payment failed and I need someone to look at it." | Asks for the reference, then logs a support ticket |
+| anyone | "Can you guarantee my payout arrives by 9am tomorrow?" | Declines the guarantee; gives the usual 2-5 business days |
 
+**History** (top of the page) lists your past calls and chats to read again.
 Each account gets 5 calls a day (up to 5 minutes each; a call ends after
 30 seconds of silence) and 90 chat messages a day (30 per conversation).
 
@@ -53,9 +57,10 @@ Browser ──voice──▶ Vapi (speech to text, text to speech)
   local embeddings, searched with a mix of vector and keyword search.
 
 **Safety is in the tools, not only the prompt.**
-- A customer is verified only with two matching identifiers.
+- Each login is linked to one customer, and every conversation is bound to
+  it at the start: the tools return only that customer's records, whatever
+  the caller claims to be.
 - Lookups return only customer-safe fields, and never internal notes.
-- Amounts are shown only to the record's own verified customer.
 - Every tool call is tied to its conversation by the connection itself, so
   one conversation can't read another's data.
 
@@ -77,10 +82,10 @@ channel receives transcripts, names or emails.
 
 ## Evidence
 
-- **Evaluation:** 15 scenarios (the PRD's 9 plus 6 variants) through the
-  real agent: 14/15 on Sonnet 5, and the one failure fixed and re-checked.
-- **Tests:** 358 automated tests, plus 13 browser tests including
-  accessibility checks.
+- **Evaluation:** 15 scenarios (the PRD's 9 plus 6 variants, including
+  cross-account attempts) through the real agent: 15/15 on Sonnet 5.
+- **Tests:** automated unit and integration tests against the real
+  database, plus browser tests including accessibility checks.
 - **Detail:** each run's full results are in `evals/results/`; the testing
   table, decisions and bugs found are in the submitted build notes.
 
