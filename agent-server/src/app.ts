@@ -12,7 +12,7 @@
 // reads environment variables and actually calls `.listen()`.
 import express, { type Request, type Response } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { checkVisitorDailyLimit, formatChatCompletionChunk, hashVisitor, issueConversationToken, newUserMessage, parseChatCompletionsBody, parseVapiEventBody, SSE_DONE, verifyConversationToken } from "@core/agent";
+import { checkVisitorDailyLimit, countVisitorConversationsToday, DAILY_CALL_LIMIT, formatChatCompletionChunk, hashVisitor, issueConversationToken, newUserMessage, parseChatCompletionsBody, parseVapiEventBody, SSE_DONE, verifyConversationToken } from "@core/agent";
 import { currentTurnSeq } from "@core/mcp";
 import { SessionCapacityError, SessionManager } from "./session-manager";
 
@@ -42,7 +42,7 @@ export function createApp(deps: AppDeps) {
   // no CSRF risk here.
   app.use("/api", (req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.header("Access-Control-Allow-Headers", "Content-Type");
     if (req.method === "OPTIONS") {
       res.sendStatus(204);
@@ -59,6 +59,23 @@ export function createApp(deps: AppDeps) {
     // a caller should be able to redirect to a pricier model), so which
     // model runs is entirely down to how this process was started.
     res.json({ ok: true, sessions: sessionManager.size, model: deps.model });
+  });
+
+  // -- GET /api/limits -------------------------------------------------------
+  // Lets the voice page show "X of 3 calls used today" before the caller
+  // ever hits the limit, not just the reactive "limit reached" message.
+  // Same caller_ref hashing as /api/conversations - a browser_id with no
+  // real call yet still gets a real (0-used) answer.
+  app.get("/api/limits", async (req: Request, res: Response) => {
+    const browserId = typeof req.query.browser_id === "string" ? req.query.browser_id : undefined;
+    const callerRef = hashVisitor(deps.visitorHashSalt, req.ip ?? "unknown", browserId);
+    try {
+      const used = await countVisitorConversationsToday(supabase, callerRef);
+      res.json({ used, limit: DAILY_CALL_LIMIT });
+    } catch (err) {
+      console.error("GET /api/limits failed:", err);
+      res.status(500).json({ error: "internal error" });
+    }
   });
 
   // -- POST /api/conversations ---------------------------------------------

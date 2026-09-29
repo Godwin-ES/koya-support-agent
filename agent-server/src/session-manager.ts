@@ -79,8 +79,17 @@ export class SessionManager {
   async getOrCreate(conversationId: string): Promise<Session> {
     const existing = this.sessions.get(conversationId);
     if (existing) {
-      existing.lastActivity = Date.now();
-      return existing.session;
+      // A prior turn's Claude/MCP failure already tore this session's own
+      // query down (Session.handleClaudeFailure) - reusing it here would
+      // silently drop or lose the next turn depending on an internal race
+      // (Task 13's real finding). Fall through and build a fresh one below
+      // instead, the same resume-with-a-handover-note path already used
+      // for a genuinely lost worker.
+      if (!existing.session.closed) {
+        existing.lastActivity = Date.now();
+        return existing.session;
+      }
+      this.sessions.delete(conversationId);
     }
     if (this.sessions.size >= this.maxConcurrent) throw new SessionCapacityError(this.maxConcurrent);
 

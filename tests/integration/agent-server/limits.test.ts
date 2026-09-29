@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { checkVisitorDailyLimit } from "@core/agent/limits";
+import { checkVisitorDailyLimit, countVisitorConversationsToday } from "@core/agent/limits";
 import { serviceRoleClient } from "../helpers/db";
 
 const supabase: SupabaseClient = serviceRoleClient();
@@ -58,5 +58,18 @@ describe("checkVisitorDailyLimit", () => {
     await newConversationFor(callerRefA);
     await newConversationFor(callerRefA);
     expect(await checkVisitorDailyLimit(supabase, callerRefB)).toEqual({ allowed: true });
+  });
+});
+
+describe("countVisitorConversationsToday", () => {
+  it("counts today's calls for this visitor only", async () => {
+    const callerRef = `test-visitor-${crypto.randomUUID()}`;
+    await newConversationFor(callerRef);
+    await newConversationFor(callerRef);
+    expect(await countVisitorConversationsToday(supabase, callerRef)).toBe(2);
+  });
+
+  it("returns 0 for a visitor with no calls today", async () => {
+    expect(await countVisitorConversationsToday(supabase, `test-visitor-${crypto.randomUUID()}`)).toBe(0);
   });
 });

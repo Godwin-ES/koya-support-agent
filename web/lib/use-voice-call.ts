@@ -28,7 +28,13 @@ export interface TranscriptTurn {
 export interface EndOfCallSummary {
   /** The tool's own follow_up_summary (SYSTEM-DESIGN.md §11.7), when a ticket or escalation was created this call. */
   followUpSummary: string | null;
+  /** Set when useVoiceCall itself ended the call after 30s of caller silence, rather than the caller hanging up (SYSTEM-DESIGN.md §9 - Vapi has no such field itself, confirmed against its live API in Task 13, so this is enforced client-side). */
+  endedDueToSilence: boolean;
 }
+
+/** SYSTEM-DESIGN.md §9: the two client-visible call limits. Vapi enforces `MAX_CALL_SECONDS` itself server-side (`maxDurationSeconds` on the assistant) - this is only the matching visual countdown. `SILENCE_TIMEOUT_MS` has no Vapi-side equivalent at all (verified against its live API, Task 13) and is enforced entirely here. */
+export const MAX_CALL_SECONDS = 300;
+const SILENCE_TIMEOUT_MS = 30_000;
 
 const BROWSER_ID_STORAGE_KEY = "relaypay_browser_id";
 
@@ -53,9 +59,14 @@ export function useVoiceCall() {
   const [agentText, setAgentText] = useState("");
   const [fullTranscript, setFullTranscript] = useState<TranscriptTurn[]>([]);
   const [endOfCallSummary, setEndOfCallSummary] = useState<EndOfCallSummary | null>(null);
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
 
   const vapiRef = useRef<Vapi | null>(null);
   const conversationRef = useRef<{ id: string; token: string } | null>(null);
+  const lastActivityAtRef = useRef<number>(0);
+  const callStartedAtRef = useRef<number>(0);
+  const endedDueToSilenceRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const getVapi = useCallback((): Vapi => {
     if (!vapiRef.current) {
@@ -66,8 +77,15 @@ export function useVoiceCall() {
       // constructs the real client.
       const stub = (globalThis as { __VAPI_STUB__?: Vapi }).__VAPI_STUB__;
       const vapi = stub ?? new Vapi(process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY!);
-      vapi.on("call-start", () => setCallState("listening"));
-      vapi.on("speech-start", () => setCallState("agent_speaking"));
+      vapi.on("call-start", () => {
+        callStartedAtRef.current = Date.now();
+        lastActivityAtRef.current = Date.now();
+        setCallState("listening");
+      });
+      vapi.on("speech-start", () => {
+        lastActivityAtRef.current = Date.now();
+        setCallState("agent_speaking");
+      });
       vapi.on("speech-end", () => setCallState((s) => (s === "agent_speaking" ? "listening" : s)));
       vapi.on("call-end", () => {
         // "What was covered... taken from the tool's follow_up_summary"
@@ -76,7 +94,7 @@ export function useVoiceCall() {
         // when it escalates, so the last assistant transcript line already
         // carries it - no separate authenticated fetch needed to show it.
         setAgentText((lastAgentLine) => {
-          setEndOfCallSummary({ followUpSummary: lastAgentLine || null });
+          setEndOfCallSummary({ followUpSummary: lastAgentLine || null, endedDueToSilence: endedDueToSilenceRef.current });
           return lastAgentLine;
         });
         setCallState((s) => (s === "ending" ? "ended" : "dropped"));
@@ -91,6 +109,7 @@ export function useVoiceCall() {
       });
       vapi.on("message", (message: unknown) => {
         if (!isTranscriptMessage(message) || message.transcriptType !== "final") return;
+        lastActivityAtRef.current = Date.now();
         if (message.role === "user") setCallerText(message.transcript);
         else setAgentText(message.transcript);
         setFullTranscript((prev) => [...prev, { role: message.role, text: message.transcript }]);
@@ -106,6 +125,8 @@ export function useVoiceCall() {
     setAgentText("");
     setFullTranscript([]);
     setEndOfCallSummary(null);
+    setRemainingSeconds(null);
+    endedDueToSilenceRef.current = false;
 
     let res: Response;
     try {
@@ -148,6 +169,39 @@ export function useVoiceCall() {
     vapiRef.current?.stop();
   }, []);
 
+  // The visible 5-minute countdown (matches maxDurationSeconds, which Vapi
+  // enforces itself - this is purely the display) and the 30-second
+  // silence timeout (which Vapi does not enforce at all - SYSTEM-DESIGN.md
+  // §9, verified against Vapi's live API in Task 13). Ticks once a second
+  // only while the call is actually connected.
+  useEffect(() => {
+    const active = callState === "listening" || callState === "agent_speaking";
+    if (!active) {
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
+      return;
+    }
+    const tick = () => {
+      const elapsedCallMs = Date.now() - callStartedAtRef.current;
+      setRemainingSeconds(Math.max(0, MAX_CALL_SECONDS - Math.floor(elapsedCallMs / 1000)));
+
+      // Silence is measured against the caller alone: the agent's own
+      // speech-start already refreshes lastActivityAtRef, so this only
+      // fires while the caller has been quiet with the agent also quiet
+      // (state === "listening") for the full window - not mid-reply.
+      if (callState === "listening" && Date.now() - lastActivityAtRef.current >= SILENCE_TIMEOUT_MS) {
+        endedDueToSilenceRef.current = true;
+        setCallState("ending");
+        vapiRef.current?.stop();
+      }
+    };
+    tick(); // shows "5:00" immediately instead of a blank second before the first tick
+    timerRef.current = setInterval(tick, 1000);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [callState]);
+
   useEffect(
     () => () => {
       vapiRef.current?.stop();
@@ -155,5 +209,5 @@ export function useVoiceCall() {
     [],
   );
 
-  return { callState, callerText, agentText, fullTranscript, endOfCallSummary, startCall, endCall };
+  return { callState, callerText, agentText, fullTranscript, endOfCallSummary, remainingSeconds, startCall, endCall };
 }

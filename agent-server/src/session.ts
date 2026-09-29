@@ -72,12 +72,16 @@ function summarize(text: string, max = 300): string {
 export class Session {
   readonly conversationId: string;
   private readonly query: Query;
-  private readonly supabase: SupabaseClient;
   private readonly toolContext: ToolContext;
   private readonly writeBuffer: RetryBuffer;
   private readonly pending: SDKUserMessage[] = [];
   private waiter: (() => void) | null = null;
-  private closed = false;
+  private _closed = false;
+
+  /** Whether a prior turn's failure already tore this session's query down (session-manager.ts checks this before reusing a cached session - reusing a closed one silently drops or loses turns, a real bug found in Task 13's live-call verification). */
+  get closed(): boolean {
+    return this._closed;
+  }
   private readonly allowedEmails = new Set<string>();
   // SDKResultSuccess.total_cost_usd is cumulative for the whole query()
   // session, not per turn ("each result carries the running total so far" -
@@ -87,7 +91,6 @@ export class Session {
 
   constructor(options: SessionOptions) {
     this.conversationId = options.conversationId;
-    this.supabase = options.supabase;
     this.toolContext = { supabase: options.supabase, conversationId: options.conversationId };
     this.writeBuffer = options.writeBuffer ?? new RetryBuffer(options.supabase);
 
@@ -148,7 +151,7 @@ export class Session {
   }
 
   close(): void {
-    this.closed = true;
+    this._closed = true;
     this.waiter?.();
   }
 
@@ -277,13 +280,32 @@ export class Session {
     }
   }
 
-  /** The spoken fallback, a best-effort support ticket, a Discord alert, and closing this session - all best-effort, since a failure handler must never itself throw. */
+  /**
+   * The spoken fallback, a best-effort support ticket, a Discord alert, and
+   * tearing down this session's own query (which may now be in a broken
+   * state) - all best-effort, since a failure handler must never itself
+   * throw.
+   *
+   * Deliberately does NOT mark the conversation ended in the database - a
+   * single turn's Claude failure isn't the end of the call (the caller is
+   * usually still on the line and keeps talking), only the real end-of-call
+   * signal (Vapi's webhook, or /api/text/end) is. A real live call surfaced
+   * this as a bug (Task 13): this used to close the conversation here, but
+   * session-manager.getOrCreate() kept reusing this same (now-dead) Session
+   * object for later turns anyway since nothing removed it from its map,
+   * so the DB said "ended" while the call visibly continued - sometimes
+   * getting a real reply (a lucky race with `push()`), sometimes silently
+   * losing the turn ("Query closed before response received"). Now
+   * getOrCreate() checks `session.closed` and builds a fresh session (with
+   * a handover note, its existing resume mechanism) instead of reusing a
+   * closed one - the conversation carries on cleanly either way.
+   */
   private async *handleClaudeFailure(userText: string, failure: AgentFailure): AsyncGenerator<TurnEvent> {
     const isMcp = failure.provider === "mcp";
     const fallbackText = isMcp ? MCP_DOWN_FALLBACK : CLAUDE_DOWN_FALLBACK;
     yield { kind: "delta", text: fallbackText };
 
-    await createSupportTicket(this.toolContext, { category: "other", priority: "urgent", summary: `Call failed mid-conversation: ${failure.message}` }).catch(() => undefined);
+    await createSupportTicket(this.toolContext, { category: "other", priority: "urgent", summary: `A turn failed mid-conversation: ${failure.message}` }).catch(() => undefined);
 
     const seq = await currentTurnSeq(this.toolContext).catch(() => 0);
     await this.writeBuffer
@@ -295,18 +317,12 @@ export class Session {
         answer_type: "decline",
         answer_type_inferred: true,
         confidence: null,
-        confidence_note: `Ended on a ${failure.provider} failure (${failure.kind}): ${failure.message}`,
+        confidence_note: `A ${failure.provider} failure (${failure.kind}) interrupted this turn: ${failure.message}`,
         interrupted: false,
         ttft_ms: null,
         total_ms: null,
       })
       .catch(() => undefined);
-
-    await this.supabase
-      .from("conversations")
-      .update({ ended_at: new Date().toISOString(), ended_reason: `${failure.provider}_failure`, final_status: "error" })
-      .eq("id", this.conversationId)
-      .then(() => undefined, () => undefined);
 
     await sendDiscordAlert(isMcp ? mcpDownMessage({ conversationId: this.conversationId, detail: failure.message }) : claudeFailedMessage({ conversationId: this.conversationId, kind: failure.kind, detail: failure.message })).catch(() => undefined);
 

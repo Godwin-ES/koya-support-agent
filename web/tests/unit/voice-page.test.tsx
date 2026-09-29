@@ -10,6 +10,7 @@ import type { EndOfCallSummary, TranscriptTurn } from "@/lib/use-voice-call";
 
 const mockUseVoiceCall = vi.fn();
 vi.mock("@/lib/use-voice-call", () => ({ useVoiceCall: () => mockUseVoiceCall() }));
+vi.mock("@/lib/use-call-limit", () => ({ useCallLimit: () => null }));
 
 interface HookValue {
   callState: CallState;
@@ -17,6 +18,7 @@ interface HookValue {
   agentText: string;
   fullTranscript: TranscriptTurn[];
   endOfCallSummary: EndOfCallSummary | null;
+  remainingSeconds: number | null;
   startCall: () => void;
   endCall: () => void;
 }
@@ -34,6 +36,7 @@ function baseHookValue(callState: CallState): HookValue {
     agentText: "",
     fullTranscript: [],
     endOfCallSummary: null,
+    remainingSeconds: null,
     startCall: vi.fn(),
     endCall: vi.fn(),
   };
@@ -54,7 +57,7 @@ function findButtonByLabels(patterns: RegExp[]): HTMLElement | null {
 describe.each(STATES)("voice page in call state '%s'", (state) => {
   it("shows exactly the enabled/disabled/hidden controls deriveCallActions specifies", async () => {
     vi.resetModules();
-    await renderAtState(state, state === "ended" ? { endOfCallSummary: { followUpSummary: null } } : {});
+    await renderAtState(state, state === "ended" ? { endOfCallSummary: { followUpSummary: null, endedDueToSilence: false } } : {});
     const actions = deriveCallActions(state);
 
     const startButton = findButtonByLabels(START_LABELS);
@@ -115,13 +118,33 @@ describe("voice page - mic_blocked, limit_reached, busy and unavailable each ren
 describe("voice page - end-of-call summary", () => {
   it("shows the tool's follow_up_summary when one was captured", async () => {
     vi.resetModules();
-    await renderAtState("ended", { endOfCallSummary: { followUpSummary: "A specialist will call you back tomorrow morning." } });
+    await renderAtState("ended", { endOfCallSummary: { followUpSummary: "A specialist will call you back tomorrow morning.", endedDueToSilence: false } });
     expect(screen.getByText("A specialist will call you back tomorrow morning.")).toBeInTheDocument();
   });
 
   it("falls back to the generic thank-you when no ticket or escalation was created", async () => {
     vi.resetModules();
-    await renderAtState("ended", { endOfCallSummary: { followUpSummary: null } });
+    await renderAtState("ended", { endOfCallSummary: { followUpSummary: null, endedDueToSilence: false } });
     expect(screen.getByText(/thanks for calling/i)).toBeInTheDocument();
+  });
+
+  it("names the 30-second silence timeout when that's why the call ended (SYSTEM-DESIGN.md §9 - enforced client-side, Vapi has no such field itself)", async () => {
+    vi.resetModules();
+    await renderAtState("ended", { endOfCallSummary: { followUpSummary: null, endedDueToSilence: true } });
+    expect(screen.getByText(/30 seconds of silence/i)).toBeInTheDocument();
+  });
+});
+
+describe("voice page - the 5-minute countdown", () => {
+  it("shows the remaining time while the call is active", async () => {
+    vi.resetModules();
+    await renderAtState("listening", { remainingSeconds: 125 });
+    expect(screen.getByText("2:05 remaining")).toBeInTheDocument();
+  });
+
+  it("shows nothing before a call has started", async () => {
+    vi.resetModules();
+    await renderAtState("idle", { remainingSeconds: null });
+    expect(screen.queryByText(/remaining/i)).not.toBeInTheDocument();
   });
 });

@@ -76,6 +76,28 @@ async function createConversation(browserId: string, channel: "web_voice" | "web
   return { status: res.status, body };
 }
 
+describe("GET /api/limits", () => {
+  it("reports 0 used for a browser_id with no calls today", async () => {
+    const res = await fetch(`${baseUrl}/api/limits?browser_id=${crypto.randomUUID()}`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ used: 0, limit: 3 });
+  });
+
+  it("reflects real calls made against the same browser_id", async () => {
+    const browserId = crypto.randomUUID();
+    await createConversation(browserId);
+    await createConversation(browserId);
+    const res = await fetch(`${baseUrl}/api/limits?browser_id=${browserId}`);
+    expect(await res.json()).toEqual({ used: 2, limit: 3 });
+  });
+
+  it("doesn't count a different browser_id's calls", async () => {
+    await createConversation(crypto.randomUUID());
+    const res = await fetch(`${baseUrl}/api/limits?browser_id=${crypto.randomUUID()}`);
+    expect(await res.json()).toEqual({ used: 0, limit: 3 });
+  });
+});
+
 describe("POST /api/conversations", () => {
   it("creates a conversation and returns a token that verifies for it", async () => {
     const { status, body } = await createConversation(crypto.randomUUID());

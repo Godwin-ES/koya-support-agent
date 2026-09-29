@@ -2,9 +2,14 @@
 //
 // SYSTEM-DESIGN.md §10's Claude-down and MCP-down fallbacks, against the
 // real Session code with a stubbed Agent SDK that fails on cue - $0, no
-// Claude calls, but real Supabase writes (the ticket, the ended
-// conversation, the recorded turn) so this checks the actual DB state a
-// caller-facing failure leaves behind, not just the emitted events.
+// Claude calls, but real Supabase writes (the ticket, the recorded turn) so
+// this checks the actual DB state a caller-facing failure leaves behind,
+// not just the emitted events. Does NOT check that the conversation gets
+// marked ended - a single turn's failure deliberately doesn't do that any
+// more (Task 13's real finding: the caller is usually still on the line,
+// and the old behavior left the DB saying "ended" while the call visibly
+// continued - see session-manager.test.ts's own regression tests for the
+// fix this drove).
 import { afterEach, describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Query, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -52,7 +57,7 @@ function resultErrorQueryFactory(): NonNullable<import("../../../agent-server/sr
 
 describe("Claude-down fallback", () => {
   it(
-    "speaks the fallback, creates a ticket, ends the conversation with an error status, and closes the session",
+    "speaks the fallback, creates a ticket, records the turn, and closes this session's own query - without ending the conversation",
     async () => {
       const conversationId = await newConversation();
       const session = new Session({
@@ -70,16 +75,17 @@ describe("Claude-down fallback", () => {
       const deltas = events.filter((e) => e.kind === "delta").map((e) => (e as { text: string }).text);
       expect(deltas.join("")).toBe(CLAUDE_DOWN_FALLBACK);
       expect(events.at(-1)).toMatchObject({ kind: "done", answer_type: "decline" });
+      expect(session.closed).toBe(true);
 
-      const { data: conversation } = await supabase.from("conversations").select("ended_at, ended_reason, final_status").eq("id", conversationId).single();
-      expect(conversation).toMatchObject({ ended_reason: "anthropic_failure", final_status: "error" });
-      expect(conversation?.ended_at).toBeTruthy();
+      const { data: conversation } = await supabase.from("conversations").select("ended_at, final_status").eq("id", conversationId).single();
+      expect(conversation).toMatchObject({ ended_at: null, final_status: null });
 
       const { data: ticket } = await supabase.from("support_tickets").select("category, priority").eq("conversation_id", conversationId).single();
       expect(ticket).toMatchObject({ category: "other", priority: "urgent" });
 
-      const { data: turn } = await supabase.from("conversation_turns").select("assistant_response, answer_type").eq("conversation_id", conversationId).single();
+      const { data: turn } = await supabase.from("conversation_turns").select("assistant_response, answer_type, confidence_note").eq("conversation_id", conversationId).single();
       expect(turn).toMatchObject({ assistant_response: CLAUDE_DOWN_FALLBACK, answer_type: "decline" });
+      expect(turn?.confidence_note).toContain("anthropic failure");
     },
     15_000,
   );
@@ -118,8 +124,8 @@ describe("MCP-down fallback", () => {
       const deltas = events.filter((e) => e.kind === "delta").map((e) => (e as { text: string }).text);
       expect(deltas.join("")).toBe(MCP_DOWN_FALLBACK);
 
-      const { data: conversation } = await supabase.from("conversations").select("ended_reason").eq("id", conversationId).single();
-      expect(conversation?.ended_reason).toBe("mcp_failure");
+      const { data: turn } = await supabase.from("conversation_turns").select("confidence_note").eq("conversation_id", conversationId).single();
+      expect(turn?.confidence_note).toContain("mcp failure");
     },
     15_000,
   );

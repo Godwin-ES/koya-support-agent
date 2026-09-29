@@ -51,6 +51,10 @@ function resultMessage(overrides: Partial<{ total_cost_usd: number }> = {}): SDK
   return { type: "result", subtype: "success", duration_ms: 10, is_error: false, total_cost_usd: overrides.total_cost_usd ?? 0.001, num_turns: 1 } as unknown as SDKMessage;
 }
 
+function failedResultMessage(subtype = "error_during_execution"): SDKMessage {
+  return { type: "result", subtype, duration_ms: 10, is_error: true, num_turns: 1, errors: [] } as unknown as SDKMessage;
+}
+
 describe("SessionManager", () => {
   it("streams a plain reply in order and records the turn", async () => {
     const conversationId = await newConversation();
@@ -132,6 +136,34 @@ describe("SessionManager", () => {
     const closed = manager.sweepIdle(Date.now() + 1500);
     expect(closed).toEqual([id]);
     expect(manager.has(id)).toBe(false);
+  });
+
+  it("a Claude failure does not end the conversation in the database - only the real end-of-call signal does (Task 13's real finding)", async () => {
+    const conversationId = await newConversation();
+    const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", queryFactory: scriptedQueryFactory([failedResultMessage()]) });
+
+    const session = await manager.getOrCreate(conversationId);
+    const events = [];
+    for await (const event of session.runTurn("What are your fees?")) events.push(event);
+
+    expect(events.at(-1)).toMatchObject({ kind: "done", answer_type: "decline" });
+    const { data } = await supabase.from("conversations").select("ended_at, final_status").eq("id", conversationId).single();
+    expect(data).toMatchObject({ ended_at: null, final_status: null });
+  });
+
+  it("getOrCreate builds a fresh session instead of reusing one a failed turn already closed", async () => {
+    const conversationId = await newConversation();
+    const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", queryFactory: scriptedQueryFactory([failedResultMessage()]) });
+
+    const first = await manager.getOrCreate(conversationId);
+    for await (const _event of first.runTurn("My payment is stuck")) {
+      /* drain */
+    }
+    expect(first.closed).toBe(true);
+
+    const second = await manager.getOrCreate(conversationId);
+    expect(second).not.toBe(first);
+    expect(second.closed).toBe(false);
   });
 
   it("touch() keeps a session alive past what would otherwise be its idle close", async () => {
