@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { supabaseServerClient } from "@/lib/supabase/server";
 import { VoicePageClient } from "@/components/voice/voice-page-client";
+import { hasAppAccess } from "@/lib/auth";
 import { signOut } from "./actions";
 
 /**
@@ -17,6 +18,10 @@ export default async function VoicePage() {
     data: { session },
   } = await supabase.auth.getSession();
   if (!session) redirect("/sign-in");
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!hasAppAccess(user)) redirect("/sign-in");
 
   const name = session.user.user_metadata?.name;
   return <VoicePageClient accessToken={session.access_token} onSignOut={signOut} userName={typeof name === "string" && name.trim() ? name : null} userEmail={session.user.email ?? null} />;

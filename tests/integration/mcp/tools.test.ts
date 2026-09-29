@@ -205,7 +205,8 @@ describe("create_escalation", () => {
 
   it("refuses a preferred_time that isn't a machine-readable timestamp - callback_time is timestamptz, not free text", async () => {
     const result = await createEscalation(context, { user_name: "A", user_email: "a@example.com", category: "other", reason: "r", preferred_time: "tomorrow 10am" });
-    expect(result).toEqual({ refused: true, reason: "invalid_preferred_time" });
+    expect(result).toMatchObject({ refused: true, reason: "invalid_preferred_time" });
+    expect((result as { hint?: string }).hint).toMatch(/ISO-8601/);
   });
 });
 

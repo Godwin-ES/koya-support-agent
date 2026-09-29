@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
-import { ArrowUp, CircleCheck, MessageSquarePlus, Phone } from "lucide-react";
+import { ArrowUp, CircleCheck, Hourglass, MessageSquarePlus, Phone } from "lucide-react";
 import { deriveTextActions } from "@core/domain/text-actions";
-import { useTextChat } from "@/lib/use-text-chat";
+import { ChatSendError, useTextChat, type ChatErrorCode } from "@/lib/use-text-chat";
+import { useUsageLimits } from "@/lib/use-usage-limits";
+import { cn } from "@/lib/utils";
 import { ActionButton } from "@/components/primitives/action-button";
 import { AgentAvatar } from "@/components/conversation/avatars";
 import { MessageThread } from "@/components/conversation/message-thread";
@@ -24,6 +26,24 @@ export function TextFallback({ initialDraft, ...props }: TextFallbackProps) {
 }
 
 const MAX_TEXTAREA_PX = 160;
+const DEFAULT_MAX_CHARS = 1000;
+const COUNTER_FROM_CHARS = 800;
+
+type ClosingCode = "conversation_ended" | "conversation_message_limit" | "chat_daily_limit";
+const CLOSING_CODES = new Set<ChatErrorCode>(["conversation_ended", "conversation_message_limit", "chat_daily_limit"]);
+
+const INLINE_ERRORS: Partial<Record<ChatErrorCode, string>> = {
+  message_too_long: "That message is too long. Shorten it and try again.",
+  reply_in_progress: "Wait for the current reply to finish, then send again.",
+  busy: "All our agents are busy. Please try again in a minute.",
+  unavailable: "Couldn't send that. Check your connection and try again.",
+};
+
+function closingCopy(code: ClosingCode, perConversation: number, perDay: number): { title: string; body: string } {
+  if (code === "conversation_ended") return { title: "This conversation was closed", body: "It closed after 15 minutes without a new message. Start a new one to keep going." };
+  if (code === "conversation_message_limit") return { title: "This conversation is full", body: `A conversation can have up to ${perConversation} messages. Start a new one to keep going.` };
+  return { title: "You've used today's chat messages", body: `You can send up to ${perDay} chat messages a day. Try again tomorrow, or start a call instead.` };
+}
 
 function resize(el: HTMLTextAreaElement) {
   el.style.height = "auto";
@@ -31,10 +51,19 @@ function resize(el: HTMLTextAreaElement) {
 }
 
 function TextChat({ accessToken, onSwitchToVoice, initialDraft, userInitials = "You", firstName, onNewConversation }: TextFallbackProps & { onNewConversation: () => void }) {
-  const { turns, isStreaming, isEnded, hasSentAMessage, sendMessage, endConversation } = useTextChat(accessToken);
+  const { turns, isStreaming, isEnded, hasSentAMessage, messagesSent, sendMessage, endConversation } = useTextChat(accessToken);
   const [draft, setDraft] = useState(initialDraft ?? "");
-  const [sendError, setSendError] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [closedBy, setClosedBy] = useState<ClosingCode | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Refetched each time a reply finishes, so the counts stay current.
+  const chatLimits = useUsageLimits(accessToken, isStreaming ? -1 : messagesSent)?.chat ?? null;
+  const maxChars = chatLimits?.max_chars ?? DEFAULT_MAX_CHARS;
+  const leftToday = chatLimits ? Math.max(0, chatLimits.limit - chatLimits.used) : null;
+  const leftInConversation = chatLimits ? Math.max(0, chatLimits.per_conversation - messagesSent) : null;
+  const closing = closedBy ?? (leftToday === 0 && !isStreaming ? "chat_daily_limit" : null);
+  const allowanceHint =
+    leftInConversation !== null && leftInConversation <= 5 ? `${leftInConversation} ${leftInConversation === 1 ? "message" : "messages"} left in this conversation` : leftToday !== null && leftToday <= 10 ? `${leftToday} ${leftToday === 1 ? "message" : "messages"} left today` : null;
 
   const actions = deriveTextActions({ draftIsEmpty: draft.trim().length === 0, isStreaming, hasSentAMessage });
   const last = turns[turns.length - 1];
@@ -57,14 +86,20 @@ function TextChat({ accessToken, onSwitchToVoice, initialDraft, userInitials = "
     if (actions.send.kind !== "enabled") return;
     const message = draft;
     setDraft("");
-    setSendError(false);
+    setSendError(null);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
     try {
       await sendMessage(message);
-    } catch {
-      setSendError(true);
+    } catch (err) {
+      const code: ChatErrorCode = err instanceof ChatSendError ? err.code : "unavailable";
+      if (CLOSING_CODES.has(code)) {
+        setClosedBy(code as ClosingCode);
+        return;
+      }
+      setDraft(message);
+      setSendError(INLINE_ERRORS[code] ?? INLINE_ERRORS.unavailable!);
     }
   }
 
@@ -120,7 +155,27 @@ function TextChat({ accessToken, onSwitchToVoice, initialDraft, userInitials = "
         }
       />
 
-      {isEnded ? (
+      {closing && !isEnded ? (
+        <div role="status" className="flex animate-message-in flex-col items-center gap-4 border-t border-[var(--color-border)] bg-[var(--color-warning-bg)] px-5 py-5 text-center sm:flex-row sm:text-left">
+          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-white/70 text-[var(--color-warning-text)]">
+            <Hourglass className="size-5" aria-hidden="true" />
+          </span>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-[var(--color-text)]">{closingCopy(closing, chatLimits?.per_conversation ?? 30, chatLimits?.limit ?? 90).title}</p>
+            <p className="mt-0.5 text-sm text-[var(--color-text-muted)]">{closingCopy(closing, chatLimits?.per_conversation ?? 30, chatLimits?.limit ?? 90).body}</p>
+          </div>
+          {closing !== "chat_daily_limit" && (
+            <button
+              type="button"
+              onClick={onNewConversation}
+              className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-white shadow-[var(--shadow-sm)] [transition:background-color_var(--transition-fast)] hover:bg-[var(--color-accent-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+            >
+              <MessageSquarePlus className="size-4" aria-hidden="true" />
+              New conversation
+            </button>
+          )}
+        </div>
+      ) : isEnded ? (
         <div role="status" className="flex animate-message-in flex-col items-center gap-4 border-t border-[var(--color-border)] bg-[var(--color-accent-softer)] px-5 py-5 text-center sm:flex-row sm:text-left">
           <span className="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--color-success-bg)] text-[var(--color-success-text)]">
             <CircleCheck className="size-5" aria-hidden="true" />
@@ -142,7 +197,7 @@ function TextChat({ accessToken, onSwitchToVoice, initialDraft, userInitials = "
         <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] p-3 sm:p-4">
           {sendError && (
             <p role="alert" className="mb-2 px-1 text-sm text-[var(--color-danger-text)]">
-              Couldn&apos;t send that. Check your connection and try again.
+              {sendError}
             </p>
           )}
           <div className="flex items-end gap-2 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-1.5 pl-4 shadow-[var(--shadow-sm)] [transition:border-color_var(--transition-fast),box-shadow_var(--transition-fast)] focus-within:border-[var(--color-accent)] focus-within:shadow-[0_0_0_4px_rgb(29_122_130_/_0.12)]">
@@ -153,14 +208,21 @@ function TextChat({ accessToken, onSwitchToVoice, initialDraft, userInitials = "
               onKeyDown={handleKeyDown}
               placeholder="Message RelayPay…"
               aria-label="Type a message"
+              maxLength={maxChars}
               rows={1}
               className="max-h-40 min-h-6 flex-1 resize-none bg-transparent py-2 text-[15px] leading-6 text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-muted)]"
             />
             <ActionButton action={handleSend} idleLabel="Send" state={actions.send} variant="primary" icon={<ArrowUp className="size-4" aria-hidden="true" />} className="rounded-[var(--radius-lg)] px-3.5 hover:translate-y-0" />
           </div>
-          <p className="mt-2 hidden px-1 text-[11px] text-[var(--color-text-muted)] sm:block">
-            <kbd className="font-sans font-semibold">Enter</kbd> to send · <kbd className="font-sans font-semibold">Shift + Enter</kbd> for a new line
-          </p>
+          <div className="mt-2 flex items-center justify-between gap-3 px-1 text-[11px] text-[var(--color-text-muted)]">
+            <p className="hidden sm:block">
+              <kbd className="font-sans font-semibold">Enter</kbd> to send · <kbd className="font-sans font-semibold">Shift + Enter</kbd> for a new line
+            </p>
+            <p className="ml-auto flex items-center gap-3">
+              {allowanceHint && <span>{allowanceHint}</span>}
+              {draft.length >= COUNTER_FROM_CHARS && <span className={cn("tabular-nums", draft.length >= maxChars && "font-semibold text-[var(--color-warning-text)]")}>{draft.length.toLocaleString()} / {maxChars.toLocaleString()}</span>}
+            </p>
+          </div>
         </div>
       )}
     </section>

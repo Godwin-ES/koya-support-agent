@@ -89,11 +89,11 @@ export function createServer(context: ToolContext): McpServer {
   server.registerTool(
     "create_support_ticket",
     {
-      description: "Log an issue for support follow-up. Idempotent per conversation and category.",
+      description: "Log a specific problem for the support team to investigate (e.g. a failed payment or invoice payment, with its reference). Idempotent per conversation and category.",
       inputSchema: {
         customer_id: z.string().optional(),
-        category: z.string(),
-        priority: z.string(),
+        category: z.string().describe('Exactly one of: "compliance", "account", "dispute", "payment", "other".'),
+        priority: z.string().describe('Exactly one of: "low", "medium", "high", "urgent".'),
         summary: z.string().min(1),
         conversation_id: z.string().optional(),
       },
@@ -108,15 +108,15 @@ export function createServer(context: ToolContext): McpServer {
   server.registerTool(
     "create_escalation",
     {
-      description: "Hand off to human support. Idempotent per conversation.",
+      description: "Hand off to human support - only for account access or restriction, compliance or identity verification, disputes, refunds or cancellations, frustrated or urgent callers, or anything needing human judgment. Idempotent per conversation.",
       inputSchema: {
         ticket_id: z.string().optional(),
         customer_id: z.string().optional(),
         user_name: z.string().min(1),
         user_email: z.string(),
-        category: z.string(),
+        category: z.string().describe('Exactly one of: "compliance", "account", "dispute", "payment", "other". KYC and identity-verification reviews are "compliance".'),
         reason: z.string().min(1),
-        preferred_time: z.string().optional(),
+        preferred_time: z.string().optional().describe("The callback time the caller asked for, as ISO-8601 with an offset (e.g. 2026-10-01T10:00:00+01:00). Required whenever the caller gave a time."),
       },
     },
     async (input) => textResult(await callWithLogging(context, "create_escalation", "hand the caller off to human support", input, async () => {

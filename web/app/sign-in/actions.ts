@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { supabaseServerClient } from "@/lib/supabase/server";
+import { hasAppAccess, NO_ACCESS_MESSAGE } from "@/lib/auth";
 
 export interface SignInResult {
   error?: string;
@@ -13,14 +14,18 @@ export async function signIn(_prev: SignInResult, formData: FormData): Promise<S
   if (!email || !password) return { error: "Enter your email and password." };
 
   const supabase = await supabaseServerClient();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: "Incorrect email or password." };
+  if (!hasAppAccess(data.user)) {
+    await supabase.auth.signOut();
+    return { error: NO_ACCESS_MESSAGE };
+  }
 
   redirect("/");
 }
 
 /**
- * "Reviewing this project? Skip sign-in" - a one-click way in for a
+ * "Sign in with demo account" - a one-click way in for a
  * grader, with no form fields at all. The demo account's password lives
  * only in env (DEMO_ACCOUNT_EMAIL/PASSWORD, server-side), never in the
  * browser bundle - it's subject to the exact same daily call limit as any

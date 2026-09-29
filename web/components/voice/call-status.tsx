@@ -1,6 +1,6 @@
 import { CalendarClock, Clock, CloudOff, MicOff, PhoneMissed, Users, type LucideIcon } from "lucide-react";
 import type { CallState } from "@core/domain/call-actions";
-import type { CallLimitStatus } from "@/lib/use-call-limit";
+import type { CallLimitStatus } from "@/lib/use-usage-limits";
 import { cn } from "@/lib/utils";
 
 export function formatMmSs(totalSeconds: number): string {

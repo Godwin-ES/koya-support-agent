@@ -8,6 +8,7 @@
 // as a failure.
 import type { ToolContext } from "../context";
 import { isCategory, isPriority } from "./categories";
+import { newTicketMessage, sendDiscordAlert } from "../../notify/discord";
 
 export interface CreateSupportTicketInput {
   customer_id?: string;
@@ -20,7 +21,10 @@ export type CreateSupportTicketResult = { refused: true; reason: "invalid_catego
 
 const UNIQUE_VIOLATION = "23505";
 
-export async function createSupportTicket(context: ToolContext, input: CreateSupportTicketInput): Promise<CreateSupportTicketResult> {
+const ALERTING_PRIORITIES = new Set(["high", "urgent"]);
+
+/** `notify: false` for callers that already send their own alert about the same event (the failed-turn fallback). */
+export async function createSupportTicket(context: ToolContext, input: CreateSupportTicketInput, options: { notify?: boolean } = {}): Promise<CreateSupportTicketResult> {
   if (!isCategory(input.category)) return { refused: true, reason: "invalid_category" };
   if (!isPriority(input.priority)) return { refused: true, reason: "invalid_priority" };
 
@@ -36,7 +40,12 @@ export async function createSupportTicket(context: ToolContext, input: CreateSup
     .select("id")
     .single();
 
-  if (!error) return { ticket_id: data.id, status: "open" };
+  if (!error) {
+    if (options.notify !== false && ALERTING_PRIORITIES.has(input.priority)) {
+      await sendDiscordAlert(newTicketMessage({ conversationId: context.conversationId, category: input.category, priority: input.priority, customerId: input.customer_id ?? null }));
+    }
+    return { ticket_id: data.id, status: "open" };
+  }
   if (error.code !== UNIQUE_VIOLATION) throw error;
 
   const { data: existing, error: existingError } = await context.supabase

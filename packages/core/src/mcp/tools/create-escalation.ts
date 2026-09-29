@@ -38,7 +38,7 @@ export interface CreateEscalationInput {
 }
 
 export type CreateEscalationResult =
-  | { refused: true; reason: "invalid_email" | "invalid_category" | "invalid_preferred_time" }
+  | { refused: true; reason: "invalid_email" | "invalid_category" | "invalid_preferred_time"; hint?: string }
   | { escalation_id: string; status: "open"; follow_up_summary: string };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -65,7 +65,7 @@ export async function createEscalation(context: ToolContext, input: CreateEscala
   if (!EMAIL_RE.test(input.user_email)) return { refused: true, reason: "invalid_email" };
   if (!isCategory(input.category)) return { refused: true, reason: "invalid_category" };
   if (input.preferred_time !== undefined && Number.isNaN(Date.parse(input.preferred_time))) {
-    return { refused: true, reason: "invalid_preferred_time" };
+    return { refused: true, reason: "invalid_preferred_time", hint: "Retry with preferred_time as an ISO-8601 timestamp with an offset, e.g. 2026-10-01T10:00:00+01:00, converted from what the caller said using the current date in your instructions." };
   }
 
   const existing = await existingOpenEscalation(context);
@@ -106,7 +106,7 @@ export async function createEscalation(context: ToolContext, input: CreateEscala
     .single();
 
   if (!error) {
-    await sendDiscordAlert(newEscalationMessage({ conversationId: context.conversationId, category: input.category }));
+    await sendDiscordAlert(newEscalationMessage({ conversationId: context.conversationId, category: input.category, callbackTime: input.preferred_time ?? null, customerId: input.customer_id ?? null }));
     return { escalation_id: data.id, status: "open", follow_up_summary: followUpSummary(input.preferred_time) };
   }
   if (error.code !== UNIQUE_VIOLATION) throw error;

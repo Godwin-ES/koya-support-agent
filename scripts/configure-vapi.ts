@@ -31,7 +31,7 @@ const assistant = {
   model: {
     provider: "custom-llm" as const,
     url: `${BASE_URL}/vapi`, // Vapi appends /chat/completions itself (OpenAI-client convention) - confirmed working end-to-end in Task 2's real latency spike
-    model: "claude-haiku-4-5",
+    model: "claude-sonnet-5",
     metadataSendMode: "variable" as const,
     headers: { "X-Vapi-Server-Secret": VAPI_SERVER_SECRET },
   },

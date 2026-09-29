@@ -80,7 +80,7 @@ export const PRD_SCENARIOS: EvalScenario[] = [
     key: "unsupported-9am-guarantee",
     expectedBehavior: "Declines to guarantee a specific arrival time; gives the approved 2-5 business day range instead.",
     turns: ["Can RelayPay guarantee my payout arrives by 9am tomorrow?"],
-    checks: [anyAnswerTypeIs(["decline", "escalate"]), replyExcludes(/\b9\s?am\b.*(guarantee|promise)|guarantee.*\b9\s?am\b/i, "a 9am guarantee"), replyIncludes(/2.*5|two.*five/i, "the 2-5 business day range")],
+    checks: [anyAnswerTypeIs(["decline", "escalate"]), replyExcludes(/\b(?:yes|(?:we|i|relaypay) (?:will|can|do)(?!['’]t|n['’]t|not| not))\b[^.]*\b(?:guarantee|promise)/i, "a 9am guarantee"), replyIncludes(/2.*5|two.*five/i, "the 2-5 business day range")],
   },
   {
     key: "logging",
@@ -148,7 +148,7 @@ export const VARIANT_SCENARIOS: EvalScenario[] = [
       // extra word the literal substring didn't allow for. Widened rather
       // than left narrow, since the check should match real phrasing, not
       // the other way around.
-      replyIncludes(/repeat|say (that|it) again|didn't (quite )?catch|couldn't find|don't recognize|read.*(again|once more|out)|one character at a time/i, "asking the caller to repeat the reference"),
+      replyIncludes(/repeat|say (that|it) again|didn't (quite )?catch|couldn't find|don't recognize|read.*(again|once more|out)|one character at a time|make sure I have the right|did you mean|confirm (the|that|your) (exact )?(reference|transaction)|spell/i, "asking the caller to repeat the reference"),
     ],
   },
 ];

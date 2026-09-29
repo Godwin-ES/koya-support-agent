@@ -1,17 +1,27 @@
 // One Session per conversation (SYSTEM-DESIGN.md §3-4): created at call
 // start so its multi-second startup overlaps the greeting, closed after 2
-// minutes idle or at call end, capped at 3 at once, and resumed with a
+// minutes idle or at call end, capped per pool (voice and chat never take
+// each other's slots), and resumed with a
 // handover note if a conversation already has turns recorded but no live
 // session (a lost worker).
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildHandoverNote, type PriorTurn } from "@core/agent";
+import { buildHandoverNote, type Channel, type PriorTurn } from "@core/agent";
 import { RetryBuffer } from "@core/domain/write-buffer";
 import { supabaseDegradedMessage, sendDiscordAlert } from "@core/notify/discord";
 import { Session, type SessionOptions } from "./session";
 
+export type Pool = "voice" | "text";
+
+export function poolFor(channel: Channel): Pool {
+  return channel === "web_text" ? "text" : "voice";
+}
+
 export class SessionCapacityError extends Error {
-  constructor(max: number) {
-    super(`at most ${max} sessions can be open at once`);
+  constructor(
+    max: number,
+    readonly pool: Pool = "voice",
+  ) {
+    super(`at most ${max} ${pool} sessions can be open at once`);
     this.name = "SessionCapacityError";
   }
 }
@@ -22,8 +32,10 @@ export interface SessionManagerOptions {
   mcpServerToken: string;
   model: string;
   effort?: "low" | "high";
-  /** SYSTEM-DESIGN.md §3: "at most 3 sessions at once". */
+  /** Voice sessions open at once (SYSTEM-DESIGN.md §9). */
   maxConcurrent?: number;
+  /** Chat sessions open at once - a separate pool, so chats never take a caller's slot. */
+  maxConcurrentText?: number;
   /** SYSTEM-DESIGN.md §3: "close after 2 minutes idle". */
   idleMs?: number;
   /** Passed through to every Session it creates - session-manager tests supply a stubbed Agent SDK here, so the real Session and SessionManager code both run under test. */
@@ -35,21 +47,23 @@ export interface SessionManagerOptions {
 interface ManagedSession {
   session: Session;
   lastActivity: number;
+  pool: Pool;
 }
 
 const DEFAULT_MAX_CONCURRENT = 3;
+const DEFAULT_MAX_CONCURRENT_TEXT = 4;
 const DEFAULT_IDLE_MS = 2 * 60_000;
 
 export class SessionManager {
   private readonly sessions = new Map<string, ManagedSession>();
-  private readonly maxConcurrent: number;
+  private readonly limits: Record<Pool, number>;
   private readonly idleMs: number;
   private sweepHandle: ReturnType<typeof setInterval> | null = null;
   /** Shared by every Session this manager creates, so a Supabase outage buffers and alerts once for the whole process, not per conversation (SYSTEM-DESIGN.md §10). */
   private readonly writeBuffer: RetryBuffer;
 
   constructor(private readonly options: SessionManagerOptions) {
-    this.maxConcurrent = options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
+    this.limits = { voice: options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT, text: options.maxConcurrentText ?? DEFAULT_MAX_CONCURRENT_TEXT };
     this.idleMs = options.idleMs ?? DEFAULT_IDLE_MS;
     this.writeBuffer = new RetryBuffer(options.supabase, {
       onFirstBuffer: () => {
@@ -71,12 +85,27 @@ export class SessionManager {
     return this.sessions.size;
   }
 
+  sizeOf(pool: Pool): number {
+    let count = 0;
+    for (const managed of this.sessions.values()) if (managed.pool === pool) count++;
+    return count;
+  }
+
+  isFull(pool: Pool): boolean {
+    return this.sizeOf(pool) >= this.limits[pool];
+  }
+
+  limitOf(pool: Pool): number {
+    return this.limits[pool];
+  }
+
   has(conversationId: string): boolean {
     return this.sessions.has(conversationId);
   }
 
   /** Starts a session at conversation start (before the caller's first turn), so its startup overlaps the greeting - or returns the existing one. */
-  async getOrCreate(conversationId: string): Promise<Session> {
+  async getOrCreate(conversationId: string, channel: Channel = "web_voice"): Promise<Session> {
+    const pool = poolFor(channel);
     const existing = this.sessions.get(conversationId);
     if (existing) {
       // A prior turn's Claude/MCP failure already tore this session's own
@@ -91,7 +120,7 @@ export class SessionManager {
       }
       this.sessions.delete(conversationId);
     }
-    if (this.sessions.size >= this.maxConcurrent) throw new SessionCapacityError(this.maxConcurrent);
+    if (this.isFull(pool)) throw new SessionCapacityError(this.limits[pool], pool);
 
     const priorTurns = await this.fetchPriorTurns(conversationId);
     const handoverNote = priorTurns.length > 0 ? buildHandoverNote(priorTurns) : undefined;
@@ -103,12 +132,13 @@ export class SessionManager {
       mcpServerUrl: this.options.mcpServerUrl,
       mcpServerToken: this.options.mcpServerToken,
       supabase: this.options.supabase,
+      channel,
       handoverNote,
       queryFactory: this.options.queryFactory,
       writeBuffer: this.writeBuffer,
     };
     const session = (this.options.sessionFactory ?? ((o) => new Session(o)))(sessionOptions);
-    this.sessions.set(conversationId, { session, lastActivity: Date.now() });
+    this.sessions.set(conversationId, { session, lastActivity: Date.now(), pool });
     return session;
   }
 

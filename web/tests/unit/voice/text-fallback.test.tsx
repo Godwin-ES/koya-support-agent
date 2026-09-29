@@ -3,6 +3,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TextFallback } from "@/components/voice/text-fallback";
 
+// The allowance display fetches /api/limits on its own - mocked out here so
+// each test's fetch mocks line up with the chat's own requests only.
+vi.mock("@/lib/use-usage-limits", () => ({ useUsageLimits: () => null }));
+
 function sseChunk(text: string): string {
   return `data: ${JSON.stringify({ text })}\n\n`;
 }

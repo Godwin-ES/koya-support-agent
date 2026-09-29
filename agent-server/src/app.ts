@@ -12,9 +12,28 @@
 // reads environment variables and actually calls `.listen()`.
 import express, { type Request, type Response } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { checkVisitorDailyLimit, countVisitorConversationsToday, DAILY_CALL_LIMIT, formatChatCompletionChunk, issueConversationToken, newUserMessage, parseChatCompletionsBody, parseVapiEventBody, SSE_DONE, verifyConversationToken } from "@core/agent";
+import {
+  CHAT_MESSAGE_MAX_CHARS,
+  CHAT_MESSAGES_PER_CONVERSATION,
+  CHAT_MESSAGES_PER_DAY,
+  checkChatMessage,
+  checkVisitorDailyLimit,
+  countChatMessagesToday,
+  countVisitorConversationsToday,
+  DAILY_CALL_LIMIT,
+  formatChatCompletionChunk,
+  issueConversationToken,
+  newUserMessage,
+  parseChatCompletionsBody,
+  parseVapiEventBody,
+  SSE_DONE,
+  verifyConversationToken,
+  type Channel,
+} from "@core/agent";
 import { currentTurnSeq } from "@core/mcp";
-import { SessionCapacityError, SessionManager } from "./session-manager";
+import { finalizeConversation } from "./lifecycle";
+import { OpsNotifier } from "./ops";
+import { poolFor, SessionCapacityError, SessionManager } from "./session-manager";
 
 export interface AppDeps {
   supabase: SupabaseClient;
@@ -22,12 +41,17 @@ export interface AppDeps {
   conversationTokenSecret: string;
   vapiServerSecret?: string;
   model: string;
-  maxConcurrentSessions?: number;
+  /** Busy, limit and spend notifications. Tests may omit it (a no-threshold notifier is used). */
+  ops?: OpsNotifier;
 }
 
 export function createApp(deps: AppDeps) {
   const { supabase, sessionManager } = deps;
-  const maxConcurrent = deps.maxConcurrentSessions ?? 3;
+  const ops = deps.ops ?? new OpsNotifier(supabase, 0);
+  // Chat conversations with a reply still streaming - a second message is
+  // refused until it finishes (the page already disables Send; this is the
+  // server-side guarantee a script can't skip).
+  const repliesInFlight = new Set<string>();
 
   const app = express();
   app.set("trust proxy", true); // behind Caddy (SYSTEM-DESIGN.md §12) - req.ip must read X-Forwarded-For, not the proxy's own address
@@ -42,7 +66,7 @@ export function createApp(deps: AppDeps) {
   app.use("/api", (req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Content-Type");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
     if (req.method === "OPTIONS") {
       res.sendStatus(204);
       return;
@@ -60,7 +84,10 @@ export function createApp(deps: AppDeps) {
     res.json({ ok: true, sessions: sessionManager.size, model: deps.model });
   });
 
-  // Every caller now signs in (Task 13/14 - the voice page moved off its
+  // Access is invite-only: an account needs `app_metadata.invited` (or
+  // staff), which only the admin API can set - so an account created
+  // directly through Supabase's public sign-up endpoint still can't use the
+  // agent. Every caller now signs in (Task 13/14 - the voice page moved off its
   // original fully-anonymous design), so caller_ref is the real
   // auth.users.id instead of a hashed IP+browser-id. `supabase.auth.getUser`
   // makes a real network call to validate the token against Supabase Auth
@@ -71,21 +98,29 @@ export function createApp(deps: AppDeps) {
     if (typeof accessToken !== "string" || !accessToken) return null;
     const { data, error } = await supabase.auth.getUser(accessToken);
     if (error || !data.user) return null;
+    const meta = data.user.app_metadata as { invited?: unknown; is_staff?: unknown } | undefined;
+    if (meta?.invited !== true && meta?.is_staff !== true) return null;
     return data.user.id;
   }
 
   // -- GET /api/limits -------------------------------------------------------
-  // Lets the voice page show "X of 3 calls used today" before the caller
-  // ever hits the limit, not just the reactive "limit reached" message.
+  // Lets the page show what's left today before the caller ever hits a
+  // limit - calls and chat messages are counted separately.
+  // The token comes in the Authorization header, never the URL: request
+  // URLs show up in the proxy's own logs, and Caddy redacts Authorization.
   app.get("/api/limits", async (req: Request, res: Response) => {
-    const callerRef = await verifyCaller(req.query.access_token);
+    const bearer = req.header("authorization")?.match(/^Bearer (.+)$/i)?.[1];
+    const callerRef = await verifyCaller(bearer);
     if (!callerRef) {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
     try {
-      const used = await countVisitorConversationsToday(supabase, callerRef);
-      res.json({ used, limit: DAILY_CALL_LIMIT });
+      const [callsUsed, chatUsed] = await Promise.all([countVisitorConversationsToday(supabase, callerRef), countChatMessagesToday(supabase, callerRef)]);
+      res.json({
+        calls: { used: callsUsed, limit: DAILY_CALL_LIMIT },
+        chat: { used: chatUsed, limit: CHAT_MESSAGES_PER_DAY, per_conversation: CHAT_MESSAGES_PER_CONVERSATION, max_chars: CHAT_MESSAGE_MAX_CHARS },
+      });
     } catch (err) {
       console.error("GET /api/limits failed:", err);
       res.status(500).json({ error: "internal error" });
@@ -95,7 +130,8 @@ export function createApp(deps: AppDeps) {
   // -- POST /api/conversations ---------------------------------------------
   app.post("/api/conversations", async (req: Request, res: Response) => {
     const body = req.body as { channel?: "web_voice" | "web_text"; access_token?: string };
-    const channel = body.channel ?? "web_voice";
+    const channel: Channel = body.channel === "web_text" ? "web_text" : "web_voice";
+    const pool = poolFor(channel);
     const callerRef = await verifyCaller(body.access_token);
     if (!callerRef) {
       res.status(401).json({ error: "unauthorized" });
@@ -103,13 +139,21 @@ export function createApp(deps: AppDeps) {
     }
 
     try {
-      const limit = await checkVisitorDailyLimit(supabase, callerRef);
-      if (!limit.allowed) {
-        res.status(429).json({ error: limit.reason });
+      if (channel === "web_voice") {
+        const limit = await checkVisitorDailyLimit(supabase, callerRef);
+        if (!limit.allowed) {
+          void ops.limitReached("calls", callerRef, DAILY_CALL_LIMIT).catch(() => undefined);
+          res.status(429).json({ error: limit.reason });
+          return;
+        }
+      } else if ((await countChatMessagesToday(supabase, callerRef)) >= CHAT_MESSAGES_PER_DAY) {
+        void ops.limitReached("chat", callerRef, CHAT_MESSAGES_PER_DAY).catch(() => undefined);
+        res.status(429).json({ error: "chat_daily_limit" });
         return;
       }
-      if (sessionManager.size >= maxConcurrent) {
+      if (sessionManager.isFull(pool)) {
         // SYSTEM-DESIGN.md §9's own wording for this case.
+        void ops.capacityRejected(pool, sessionManager.limitOf(pool)).catch(() => undefined);
         res.status(503).json({ error: "all agents are busy, please try again shortly" });
         return;
       }
@@ -120,12 +164,13 @@ export function createApp(deps: AppDeps) {
 
       // Started here, not on the first turn, so its multi-second startup
       // overlaps the greeting (SYSTEM-DESIGN.md §3 step 2).
-      await sessionManager.getOrCreate(conversationId);
+      await sessionManager.getOrCreate(conversationId, channel);
 
       const token = issueConversationToken(deps.conversationTokenSecret, conversationId);
       res.json({ conversation_id: conversationId, token });
     } catch (err) {
       if (err instanceof SessionCapacityError) {
+        void ops.capacityRejected(err.pool, sessionManager.limitOf(err.pool)).catch(() => undefined);
         res.status(503).json({ error: "all agents are busy, please try again shortly" });
         return;
       }
@@ -151,7 +196,10 @@ export function createApp(deps: AppDeps) {
       return;
     }
 
-    await streamTurn(deps, res, { conversationId: parsed.conversationId, userMessages: parsed.userMessages, model: parsed.model ?? deps.model, format: "openai" });
+    // Always this process's own model - the one ANTHROPIC_MODEL sets for
+    // voice and chat alike. The model name Vapi's assistant config sends
+    // is ignored, so the two can never silently disagree.
+    await streamTurn(deps, ops, res, { conversationId: parsed.conversationId, userMessages: parsed.userMessages, model: deps.model, format: "openai", channel: "web_voice" });
   });
 
   // -- POST /api/text ----------------------------------------------------------
@@ -165,8 +213,36 @@ export function createApp(deps: AppDeps) {
       res.status(401).json({ error: "invalid or expired token" });
       return;
     }
+    const conversationId = body.conversation_id;
 
-    await streamTurn(deps, res, { conversationId: body.conversation_id, userMessages: [body.message], model: deps.model, format: "plain", forceNew: true });
+    const { data: conversation, error } = await supabase.from("conversations").select("caller_ref, ended_at").eq("id", conversationId).maybeSingle();
+    if (error || !conversation) {
+      res.status(404).json({ error: "conversation_not_found" });
+      return;
+    }
+    if (conversation.ended_at) {
+      res.status(409).json({ error: "conversation_ended" });
+      return;
+    }
+    if (repliesInFlight.has(conversationId)) {
+      res.status(409).json({ error: "reply_in_progress" });
+      return;
+    }
+
+    repliesInFlight.add(conversationId);
+    try {
+      const callerRef = conversation.caller_ref as string | null;
+      const [seq, messagesToday] = await Promise.all([currentTurnSeq({ supabase, conversationId }), callerRef ? countChatMessagesToday(supabase, callerRef) : Promise.resolve(null)]);
+      const refusal = checkChatMessage({ messageLength: body.message.length, messagesInConversation: seq - 1, messagesToday });
+      if (refusal) {
+        if (refusal === "chat_daily_limit" && callerRef) void ops.limitReached("chat", callerRef, CHAT_MESSAGES_PER_DAY).catch(() => undefined);
+        res.status(refusal === "message_too_long" ? 413 : 429).json({ error: refusal });
+        return;
+      }
+      await streamTurn(deps, ops, res, { conversationId, userMessages: [body.message], model: deps.model, format: "plain", forceNew: true, channel: "web_text" });
+    } finally {
+      repliesInFlight.delete(conversationId);
+    }
   });
 
   // -- POST /api/text/end -----------------------------------------------------
@@ -188,11 +264,12 @@ export function createApp(deps: AppDeps) {
       return;
     }
 
-    const { data: existing } = await supabase.from("conversations").select("ended_at").eq("id", body.conversation_id).maybeSingle();
-    if (!existing?.ended_at) {
-      await supabase.from("conversations").update({ ended_at: new Date().toISOString(), ended_reason: "caller_ended", final_status: "completed" }).eq("id", body.conversation_id);
-    }
     sessionManager.close(body.conversation_id);
+    try {
+      await finalizeConversation(supabase, body.conversation_id, { endedReason: "caller_ended", finalStatus: "completed" });
+    } catch (err) {
+      console.error("finalizing text conversation failed:", err);
+    }
     res.json({ ended: true });
   });
 
@@ -212,21 +289,14 @@ export function createApp(deps: AppDeps) {
 
     try {
       if (event.type === "end-of-call-report") {
-        const { data: existing } = await supabase.from("conversations").select("ended_at").eq("id", event.conversationId).maybeSingle();
-        if (!existing?.ended_at) {
-          // Idempotent per call: a resend after ended_at is already set is a no-op (SYSTEM-DESIGN.md §10).
-          await supabase
-            .from("conversations")
-            .update({
-              ended_at: new Date().toISOString(),
-              ended_reason: event.endedReason,
-              final_status: event.endedReason.includes("error") ? "error" : "completed",
-              summary: event.summary,
-              ...(event.callId ? { vapi_call_id: event.callId } : {}),
-            })
-            .eq("id", event.conversationId);
-        }
         sessionManager.close(event.conversationId);
+        // Idempotent per call: a resend after the conversation already ended is a no-op (SYSTEM-DESIGN.md §10).
+        await finalizeConversation(supabase, event.conversationId, {
+          endedReason: event.endedReason,
+          finalStatus: event.endedReason.includes("error") ? "error" : "completed",
+          vapiSummary: event.summary,
+          vapiCallId: event.callId,
+        });
       } else if (event.type === "hang") {
         await supabase.from("conversation_events").insert({ conversation_id: event.conversationId, event_type: "vapi_hang", summary: "Vapi reported a hang (delayed or unresponsive assistant)." });
       } else if (event.type === "status-update") {
@@ -259,9 +329,10 @@ interface StreamTurnArgs {
   format: "openai" | "plain";
   /** /api/text has no history to diff against - its one message is always new. */
   forceNew?: boolean;
+  channel: Channel;
 }
 
-async function streamTurn(deps: AppDeps, res: Response, args: StreamTurnArgs): Promise<void> {
+async function streamTurn(deps: AppDeps, ops: OpsNotifier, res: Response, args: StreamTurnArgs): Promise<void> {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -300,12 +371,13 @@ async function streamTurn(deps: AppDeps, res: Response, args: StreamTurnArgs): P
       return;
     }
 
-    const session = await deps.sessionManager.getOrCreate(args.conversationId);
+    const session = await deps.sessionManager.getOrCreate(args.conversationId, args.channel);
     for await (const event of session.runTurn(newMessage, { interrupted: () => interrupted })) {
       if (event.kind === "delta" && event.text) write(event.text);
     }
     res.write(SSE_DONE);
     res.end();
+    void ops.checkDailySpend().catch((err) => console.error("spend check failed:", err));
   } catch (err) {
     console.error(`turn failed for ${args.conversationId}:`, err);
     if (!res.headersSent) {

@@ -55,7 +55,55 @@ function failedResultMessage(subtype = "error_during_execution"): SDKMessage {
   return { type: "result", subtype, duration_ms: 10, is_error: true, num_turns: 1, errors: [] } as unknown as SDKMessage;
 }
 
+/** Like scriptedQueryFactory, but the first message arrives only after `delayMs` - long enough for the holding phrase's 900ms timer. */
+function slowFirstReplyFactory(script: SDKMessage[], delayMs: number): NonNullable<SessionOptions["queryFactory"]> {
+  return () => {
+    let index = 0;
+    return {
+      next: async () => {
+        if (index === 0) await new Promise((r) => setTimeout(r, delayMs));
+        if (index >= script.length) return { done: true as const, value: undefined };
+        return { done: false as const, value: script[index++] };
+      },
+      interrupt: async () => {},
+    } as unknown as Query;
+  };
+}
+
+describe("the holding phrase", () => {
+  async function runSlowTurn(channel: "web_voice" | "web_text") {
+    const conversationId = await newConversation();
+    const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", queryFactory: slowFirstReplyFactory([textDelta("Fees depend on the corridor."), resultMessage()], 1_200) });
+    const session = await manager.getOrCreate(conversationId, channel);
+    const deltas: string[] = [];
+    for await (const event of session.runTurn("What are your fees?")) if (event.kind === "delta") deltas.push(event.text);
+    const { data } = await supabase.from("conversation_turns").select("assistant_response").eq("conversation_id", conversationId).single();
+    return { spoken: deltas.join(""), recorded: data?.assistant_response };
+  }
+
+  it("fills a slow voice turn with a short phrase, but never saves it into the recorded reply", async () => {
+    const { spoken, recorded } = await runSlowTurn("web_voice");
+    expect(spoken).not.toBe("Fees depend on the corridor.");
+    expect(spoken.endsWith("Fees depend on the corridor.")).toBe(true);
+    expect(recorded).toBe("Fees depend on the corridor.");
+  }, 10_000);
+
+  it("is never used in text chat - the page shows typing dots instead", async () => {
+    const { spoken, recorded } = await runSlowTurn("web_text");
+    expect(spoken).toBe("Fees depend on the corridor.");
+    expect(recorded).toBe("Fees depend on the corridor.");
+  }, 10_000);
+});
+
 describe("SessionManager", () => {
+  it("keeps voice and chat in separate pools - a full set of calls doesn't block a chat", async () => {
+    const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", maxConcurrent: 1, maxConcurrentText: 1, queryFactory: scriptedQueryFactory([resultMessage()]) });
+    await manager.getOrCreate(await newConversation(), "web_voice");
+    await expect(manager.getOrCreate(await newConversation(), "web_voice")).rejects.toThrow(SessionCapacityError);
+    await expect(manager.getOrCreate(await newConversation(), "web_text")).resolves.toBeDefined();
+    await expect(manager.getOrCreate(await newConversation(), "web_text")).rejects.toThrow(SessionCapacityError);
+  });
+
   it("streams a plain reply in order and records the turn", async () => {
     const conversationId = await newConversation();
     const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", queryFactory: scriptedQueryFactory([textDelta("Fees "), textDelta("depend on the corridor."), resultMessage()]) });

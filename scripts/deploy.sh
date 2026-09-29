@@ -41,7 +41,7 @@ echo "--- agent-server logs ---"
 sudo docker compose logs --tail 20 agent-server
 echo "--- mcp-server logs ---"
 sudo docker compose logs --tail 20 mcp-server
-echo "--- caddy logs ---"
-sudo docker compose logs --tail 20 caddy
+# Caddy's logs are deliberately not printed here: its warning lines carry
+# request headers, so a deploy's output is the wrong place for them.
 sudo docker image prune -f >/dev/null
 REMOTE

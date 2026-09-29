@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useActionState } from "react";
 import { UserRound } from "lucide-react";
 import { AuthShell } from "@/components/auth/auth-shell";
@@ -36,12 +35,7 @@ export default function SignInPage() {
         </SubmitButton>
       </form>
 
-      <p className="mt-6 text-center text-sm text-[var(--color-text-muted)]">
-        Need an account?{" "}
-        <Link href="/sign-up" className="font-medium text-[var(--color-accent)] hover:underline">
-          Sign up
-        </Link>
-      </p>
+      <p className="mt-6 text-center text-sm text-[var(--color-text-muted)]">Access is by invitation. Check your email for an invite link.</p>
     </AuthShell>
   );
 }

@@ -15,7 +15,7 @@ import type { EndOfCallSummary, TranscriptTurn } from "@/lib/use-voice-call";
 
 const mockUseVoiceCall = vi.fn();
 vi.mock("@/lib/use-voice-call", () => ({ useVoiceCall: () => mockUseVoiceCall() }));
-vi.mock("@/lib/use-call-limit", () => ({ useCallLimit: () => null }));
+vi.mock("@/lib/use-usage-limits", () => ({ useUsageLimits: () => null }));
 
 interface HookValue {
   callState: CallState;

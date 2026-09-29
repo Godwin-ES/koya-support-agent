@@ -27,10 +27,10 @@ const testUserIds: string[] = [];
 // auth.users.id, verified via a real Supabase access token, not an
 // arbitrary string. A fresh account per "visitor" the tests need to tell
 // apart, cleaned up afterward.
-async function newCallerToken(): Promise<string> {
+async function newCallerToken(options: { invited?: boolean } = {}): Promise<string> {
   const email = `agent-server-test-${crypto.randomUUID()}@relaypay-test.example`;
   const password = "Test-caller-pass-1!";
-  const { data: created, error: createError } = await supabase.auth.admin.createUser({ email, password, email_confirm: true });
+  const { data: created, error: createError } = await supabase.auth.admin.createUser({ email, password, email_confirm: true, app_metadata: options.invited === false ? {} : { invited: true } });
   if (createError) throw createError;
   testUserIds.push(created.user.id);
 
@@ -103,23 +103,35 @@ describe("GET /api/limits", () => {
 
   it("reports 0 used for an account with no calls today", async () => {
     const token = await newCallerToken();
-    const res = await fetch(`${baseUrl}/api/limits?access_token=${token}`);
+    const res = await fetch(`${baseUrl}/api/limits`, { headers: { Authorization: `Bearer ${token}` } });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ used: 0, limit: 3 });
+    expect(await res.json()).toEqual({ calls: { used: 0, limit: 5 }, chat: { used: 0, limit: 90, per_conversation: 30, max_chars: 1000 } });
   });
 
   it("reflects real calls made against the same account", async () => {
     const token = await newCallerToken();
     await createConversation(token);
     await createConversation(token);
-    const res = await fetch(`${baseUrl}/api/limits?access_token=${token}`);
-    expect(await res.json()).toEqual({ used: 2, limit: 3 });
+    const res = await fetch(`${baseUrl}/api/limits`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(await res.json()).toEqual({ calls: { used: 2, limit: 5 }, chat: { used: 0, limit: 90, per_conversation: 30, max_chars: 1000 } });
   });
 
   it("doesn't count a different account's calls", async () => {
     await createConversation(await newCallerToken());
-    const res = await fetch(`${baseUrl}/api/limits?access_token=${await newCallerToken()}`);
-    expect(await res.json()).toEqual({ used: 0, limit: 3 });
+    const res = await fetch(`${baseUrl}/api/limits`, { headers: { Authorization: `Bearer ${await newCallerToken()}` } });
+    expect(await res.json()).toEqual({ calls: { used: 0, limit: 5 }, chat: { used: 0, limit: 90, per_conversation: 30, max_chars: 1000 } });
+  });
+
+  it("doesn't count chats as calls - the two limits are separate", async () => {
+    const token = await newCallerToken();
+    await createConversation(token, "web_text");
+    const res = await fetch(`${baseUrl}/api/limits`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(((await res.json()) as { calls: { used: number } }).calls.used).toBe(0);
+  });
+
+  it("refuses an account that wasn't invited - public sign-up can't reach the agent", async () => {
+    const res = await fetch(`${baseUrl}/api/limits`, { headers: { Authorization: `Bearer ${await newCallerToken({ invited: false })}` } });
+    expect(res.status).toBe(401);
   });
 });
 
@@ -143,19 +155,24 @@ describe("POST /api/conversations", () => {
   });
 
   it(
-    "refuses a visitor's 4th call today with 429 daily_limit_reached",
+    "refuses a visitor's 6th call today with 429 daily_limit_reached",
     async () => {
       const token = await newCallerToken();
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 5; i++) {
         const { status, body } = await createConversation(token);
         expect(status).toBe(200);
         sessionManager.close(body.conversation_id as string); // free the session slot without affecting the daily count
       }
-      const fourth = await createConversation(token);
-      expect(fourth.status).toBe(429);
-      expect(fourth.body).toEqual({ error: "daily_limit_reached" });
+      const sixth = await createConversation(token);
+      expect(sixth.status).toBe(429);
+      expect(sixth.body).toEqual({ error: "daily_limit_reached" });
+
+      // Chat is limited separately, so a caller out of calls can still type.
+      const chat = await createConversation(token, "web_text");
+      expect(chat.status).toBe(200);
+      sessionManager.close(chat.body.conversation_id as string);
     },
-    20_000,
+    30_000,
   );
 
   it(
@@ -168,8 +185,13 @@ describe("POST /api/conversations", () => {
       const fourth = await createConversation(await newCallerToken());
       expect(fourth.status).toBe(503);
       expect(fourth.body).toEqual({ error: "all agents are busy, please try again shortly" });
+
+      // Chats have their own pool - a full set of voice calls doesn't block one.
+      const chat = await createConversation(await newCallerToken(), "web_text");
+      expect(chat.status).toBe(200);
+      sessionManager.close(chat.body.conversation_id as string);
     },
-    20_000,
+    30_000,
   );
 });
 
@@ -238,6 +260,34 @@ describe("POST /api/text", () => {
     const res = await fetch(`${baseUrl}/api/text`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: "x", message: "hi" }) });
     expect(res.status).toBe(400);
   });
+
+  async function sendText(conversation: Record<string, unknown>, message: string) {
+    const res = await fetch(`${baseUrl}/api/text`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: conversation.conversation_id, token: conversation.token, message }) });
+    return { status: res.status, body: res.headers.get("content-type")?.includes("json") ? ((await res.json()) as Record<string, unknown>) : await res.text() };
+  }
+
+  it("refuses a message over 1,000 characters with 413, before any Claude call", async () => {
+    const { body } = await createConversation(await newCallerToken(), "web_text");
+    const res = await sendText(body, "x".repeat(1001));
+    expect(res).toEqual({ status: 413, body: { error: "message_too_long" } });
+    const { count } = await supabase.from("conversation_turns").select("id", { count: "exact", head: true }).eq("conversation_id", body.conversation_id);
+    expect(count).toBe(0);
+  });
+
+  it("refuses the 31st message in one conversation with 429 conversation_message_limit", async () => {
+    const { body } = await createConversation(await newCallerToken(), "web_text");
+    const rows = Array.from({ length: 30 }, (_, i) => ({ conversation_id: body.conversation_id, seq: i + 1, user_transcript: "hi", assistant_response: "hello", answer_type: "answer" }));
+    await supabase.from("conversation_turns").insert(rows);
+    const res = await sendText(body, "one more");
+    expect(res).toEqual({ status: 429, body: { error: "conversation_message_limit" } });
+  });
+
+  it("refuses a message to a conversation that has already ended with 409 conversation_ended", async () => {
+    const { body } = await createConversation(await newCallerToken(), "web_text");
+    await fetch(`${baseUrl}/api/text/end`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: body.conversation_id, token: body.token }) });
+    const res = await sendText(body, "are you there?");
+    expect(res).toEqual({ status: 409, body: { error: "conversation_ended" } });
+  });
 });
 
 describe("POST /api/text/end", () => {
@@ -249,9 +299,10 @@ describe("POST /api/text/end", () => {
     expect(res.status).toBe(200);
     expect(sessionManager.has(body.conversation_id as string)).toBe(false);
 
-    const { data: conversation } = await supabase.from("conversations").select("ended_at, ended_reason, final_status").eq("id", body.conversation_id).single();
+    const { data: conversation } = await supabase.from("conversations").select("ended_at, ended_reason, final_status, summary").eq("id", body.conversation_id).single();
     expect(conversation).toMatchObject({ ended_reason: "caller_ended", final_status: "completed" });
     expect(conversation?.ended_at).toBeTruthy();
+    expect(conversation?.summary).toBe("Web chat with no messages. Ended by the customer.");
   });
 
   it("rejects an invalid token", async () => {

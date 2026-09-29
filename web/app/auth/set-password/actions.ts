@@ -2,33 +2,26 @@
 
 import { redirect } from "next/navigation";
 import { supabaseServerClient } from "@/lib/supabase/server";
-import { isStaff } from "@/lib/auth";
+import { hasAppAccess, NO_ACCESS_MESSAGE } from "@/lib/auth";
 
 export interface SetPasswordResult {
   error?: string;
 }
 
-/**
- * Runs on the session a staff invite link's callback just established -
- * the invited person has no password yet, this is how they set one. It
- * no longer grants staff: that flag is set when the invite is sent
- * (scripts/invite-user.mjs --staff). Completing *any* invite used to be
- * the staff signal, which would have let an invited customer open this
- * page and make themselves staff once customer invites existed.
- */
+/** The customer side of an invite: the invite link's callback established the session; this sets the account's first password. */
 export async function setPassword(_prev: SetPasswordResult, formData: FormData): Promise<SetPasswordResult> {
   const password = String(formData.get("password") ?? "");
-  if (!password) return { error: "Enter a password." };
+  if (password.length < 8) return { error: "Use at least 8 characters." };
 
   const supabase = await supabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { error: "Your invite link has expired. Ask for a new one." };
-  if (!isStaff(user)) return { error: "This invite is for the customer app, not the console." };
+  if (!hasAppAccess(user)) return { error: NO_ACCESS_MESSAGE };
 
   const { error } = await supabase.auth.updateUser({ password });
   if (error) return { error: error.message };
 
-  redirect("/console");
+  redirect("/");
 }

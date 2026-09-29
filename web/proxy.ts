@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
-import { isStaff } from "@/lib/auth";
+import { hasAppAccess, isStaff } from "@/lib/auth";
 
 /**
  * Two gates behind the same Supabase Auth session check: `/console`
@@ -39,7 +39,7 @@ export async function proxy(request: NextRequest) {
 
   // The invite-completion flow arrives with no session cookie yet - that's
   // exactly what it establishes, so it can't be behind this same gate.
-  if (pathname.startsWith("/console/auth/")) return response;
+  if (pathname.startsWith("/console/auth/") || pathname.startsWith("/auth/")) return response;
 
   const isConsoleRoute = pathname.startsWith("/console") && pathname !== "/console/sign-in";
   if (isConsoleRoute && !isStaff(user)) {
@@ -53,13 +53,15 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(consoleUrl);
   }
 
-  const isPublicAuthRoute = pathname === "/sign-in" || pathname === "/sign-up";
-  if (pathname === "/" && !user) {
+  // Invite-only: a signed-in account without access (made through
+  // Supabase's public sign-up endpoint, not an invite) is treated as
+  // signed out here, and refused at sign-in itself.
+  if (pathname === "/" && !hasAppAccess(user)) {
     const signInUrl = request.nextUrl.clone();
     signInUrl.pathname = "/sign-in";
     return NextResponse.redirect(signInUrl);
   }
-  if (isPublicAuthRoute && user) {
+  if (pathname === "/sign-in" && hasAppAccess(user)) {
     const homeUrl = request.nextUrl.clone();
     homeUrl.pathname = "/";
     return NextResponse.redirect(homeUrl);
@@ -69,5 +71,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/console/:path*", "/", "/sign-in", "/sign-up"],
+  matcher: ["/console/:path*", "/", "/sign-in", "/auth/:path*"],
 };

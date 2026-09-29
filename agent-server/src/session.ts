@@ -9,7 +9,7 @@
 // `query()` from `@anthropic-ai/claude-agent-sdk`.
 import { query, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildSystemPrompt, decideTurn, extractEmails, VoiceStreamFilter, type AnswerType, type DeclaredDecision } from "@core/agent";
+import { buildSystemPrompt, decideTurn, extractEmails, VoiceStreamFilter, type AnswerType, type Channel, type DeclaredDecision } from "@core/agent";
 import { currentTurnSeq, readTurnToolCalls, type ToolContext, createSupportTicket } from "@core/mcp";
 import { AgentFailure, classifyMcpFailure, classifySdkError, CLAUDE_DOWN_FALLBACK, MCP_DOWN_FALLBACK } from "@core/domain/failure";
 import { RetryBuffer } from "@core/domain/write-buffer";
@@ -23,10 +23,14 @@ const TOOL_NAMES = ["search_knowledge", "lookup_customer", "lookup_transaction",
 // turn's real thinking-before-anything-is-said time runs 2-5s regardless of
 // a tool call, so the same filler fires whenever no token has arrived
 // within ~900ms of the turn starting - not only the tool-call case it was
-// first written for. A single generic acknowledgement, not "let me check
-// that", since it now also fires on turns with no lookup at all.
+// first written for. Voice only: in text chat the page's typing dots
+// already say "working on it", and a spoken filler read as the start of
+// every reply. Rotated so a caller doesn't hear the same words every
+// turn, and never saved into the recorded reply - it's there to fill
+// silence, not part of the answer. Generic on purpose ("let me check"
+// would be wrong on a turn with no lookup).
 const HOLDING_DELAY_MS = 900;
-const HOLDING_PHRASE = "Mm, let's see. ";
+export const HOLDING_PHRASES = ["Okay, one moment. ", "Sure, let's see. ", "Right, just a second. ", "Mm, give me a moment. "] as const;
 
 export type TurnDeltaEvent = { kind: "delta"; text: string };
 export type TurnDoneEvent = {
@@ -48,6 +52,8 @@ export interface SessionOptions {
   mcpServerUrl: string;
   mcpServerToken: string;
   supabase: SupabaseClient;
+  /** Voice gets the spoken holding phrase; text doesn't. Defaults to voice. */
+  channel?: Channel;
   /** SYSTEM-DESIGN.md §10: a fresh session for a conversation whose previous one was lost, briefed on what already happened. */
   handoverNote?: string;
   /** Overrides the real Agent SDK query() - session-manager tests supply a stub here. */
@@ -88,11 +94,14 @@ export class Session {
   // the SDK's own doc comment on the field) - tracked here so each turn's
   // own cost_usd is the delta since the previous one, not the running total.
   private cumulativeCostUsd = 0;
+  private readonly speaksHoldingPhrase: boolean;
+  private holdingPhrasesUsed = 0;
 
   constructor(options: SessionOptions) {
     this.conversationId = options.conversationId;
     this.toolContext = { supabase: options.supabase, conversationId: options.conversationId };
     this.writeBuffer = options.writeBuffer ?? new RetryBuffer(options.supabase);
+    this.speaksHoldingPhrase = (options.channel ?? "web_voice") !== "web_text";
 
     const systemPrompt = buildSystemPrompt(new Date()) + (options.handoverNote ?? "");
     const effort = options.effort ?? "low";
@@ -172,7 +181,7 @@ export class Session {
       for (;;) {
         let result: IteratorResult<SDKMessage, void>;
 
-        if (firstTokenAt === null && !holdingSent) {
+        if (this.speaksHoldingPhrase && firstTokenAt === null && !holdingSent) {
           const raced = await Promise.race([
             nextPromise.then((r) => ({ kind: "message" as const, r })),
             sleep(HOLDING_DELAY_MS).then(() => ({ kind: "timeout" as const })),
@@ -180,8 +189,8 @@ export class Session {
           if (raced.kind === "timeout") {
             holdingSent = true;
             firstTokenAt = performance.now();
-            assistantResponse += HOLDING_PHRASE;
-            yield { kind: "delta", text: HOLDING_PHRASE };
+            const phrase = HOLDING_PHRASES[this.holdingPhrasesUsed++ % HOLDING_PHRASES.length]!;
+            yield { kind: "delta", text: phrase };
             continue;
           }
           result = raced.r;
@@ -305,7 +314,7 @@ export class Session {
     const fallbackText = isMcp ? MCP_DOWN_FALLBACK : CLAUDE_DOWN_FALLBACK;
     yield { kind: "delta", text: fallbackText };
 
-    await createSupportTicket(this.toolContext, { category: "other", priority: "urgent", summary: `A turn failed mid-conversation: ${failure.message}` }).catch(() => undefined);
+    await createSupportTicket(this.toolContext, { category: "other", priority: "urgent", summary: `A turn failed mid-conversation: ${failure.message}` }, { notify: false }).catch(() => undefined);
 
     const seq = await currentTurnSeq(this.toolContext).catch(() => 0);
     await this.writeBuffer

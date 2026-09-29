@@ -35,11 +35,11 @@ export default function ConsoleAuthCallbackPage() {
   }, []);
 
   return (
-    <AuthShell title="Joining the console" audience="staff">
+    <AuthShell title="Finishing your invite">
       {error ? (
         <p role="alert" className="text-center text-sm text-[var(--color-danger-text)]">
           That invite link is missing or expired. Ask for a new one, or{" "}
-          <a href="/console/sign-in" className="font-medium text-[var(--color-accent)] hover:underline">
+          <a href="/sign-in" className="font-medium text-[var(--color-accent)] hover:underline">
             sign in
           </a>
           .

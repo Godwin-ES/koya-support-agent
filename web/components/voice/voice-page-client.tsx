@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Headset, Keyboard, Mic, Phone, PhoneOff } from "lucide-react";
 import { deriveCallActions, type CallState } from "@core/domain/call-actions";
 import { useVoiceCall } from "@/lib/use-voice-call";
-import { useCallLimit } from "@/lib/use-call-limit";
+import { useUsageLimits } from "@/lib/use-usage-limits";
 import { ActionButton } from "@/components/primitives/action-button";
 import { cn } from "@/lib/utils";
 import { AgentAvatar, initialsFrom } from "@/components/conversation/avatars";
@@ -32,7 +32,7 @@ export function VoicePageClient({ accessToken, onSignOut, userName = null, userE
   const [textMode, setTextMode] = useState(false);
   const [textDraft, setTextDraft] = useState<string | undefined>(undefined);
   const [hasStartedBefore, setHasStartedBefore] = useState(false);
-  const callLimit = useCallLimit(accessToken, callState);
+  const callLimit = useUsageLimits(accessToken, callState)?.calls ?? null;
 
   const actions = deriveCallActions(callState);
   const isActive = callState === "listening" || callState === "agent_speaking";

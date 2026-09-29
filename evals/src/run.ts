@@ -14,6 +14,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { issueConversationToken } from "@core/agent";
+import { evaluationRunMessage, sendDiscordActivity } from "@core/notify/discord";
 import { checkHealth, endConversation, sendTurn } from "./agent-client";
 import { loadCheckContext, type CheckResult } from "./checks";
 import { ALL_SCENARIOS, type EvalScenario } from "./scenarios";
@@ -85,12 +86,17 @@ async function main() {
   }
 
   const runId = arg("run-id") ?? `${model}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}`;
-  console.log(`Running ${ALL_SCENARIOS.length} scenarios against agent-server's "${model}" (run_id: ${runId})...`);
 
   const supabase: SupabaseClient = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!, { auth: { autoRefreshToken: false, persistSession: false } });
 
+  // --only <key>[,<key>...] re-checks specific scenarios without paying for the full set.
+  const only = arg("only")?.split(",");
+  const scenarios = only ? ALL_SCENARIOS.filter((s) => only.includes(s.key)) : ALL_SCENARIOS;
+  if (only && scenarios.length === 0) throw new Error(`No scenario matches --only ${only.join(",")}`);
+  console.log(`Running ${scenarios.length} scenarios against agent-server's "${model}" (run_id: ${runId})...`);
+
   const outcomes: ScenarioOutcome[] = [];
-  for (const scenario of ALL_SCENARIOS) {
+  for (const scenario of scenarios) {
     process.stdout.write(`  ${scenario.key}... `);
     try {
       const outcome = await runScenario(supabase, runId, model, scenario);
@@ -114,6 +120,10 @@ async function main() {
   const outPath = path.join(resultsDir, `${runId}.md`);
   writeFileSync(outPath, `# Evaluation run: ${runId}\n\nModel: ${model} · ${passCount}/${outcomes.length} passed · $${totalCost.toFixed(4)}\n\n${table}\n`);
   console.log(`\nWritten to ${outPath}`);
+
+  // One #activity message for the whole run - agent-server skips its
+  // per-conversation message for evaluation conversations (no account).
+  await sendDiscordActivity(evaluationRunMessage({ runId, model, passed: passCount, total: outcomes.length, costUsd: totalCost }));
 }
 
 main().catch((err) => {

@@ -1,6 +1,6 @@
 /**
  * Creates (or updates the password of, if it already exists) the public
- * app's "Continue as demo reviewer" account (web/app/sign-in/actions.ts's
+ * app's "Sign in with demo account" account (web/app/sign-in/actions.ts's
  * demoSignIn) - a normal account, subject to the same daily call limit as
  * anyone else. Its credentials go in DEMO_ACCOUNT_EMAIL/DEMO_ACCOUNT_PASSWORD
  * (.env.local locally, the Vercel project's env for production) - never in
@@ -28,14 +28,14 @@ const { data: existing } = await supabase.auth.admin.listUsers();
 const already = existing?.users.find((u) => u.email === email);
 
 if (already) {
-  const { error } = await supabase.auth.admin.updateUserById(already.id, { password });
+  const { error } = await supabase.auth.admin.updateUserById(already.id, { password, app_metadata: { ...already.app_metadata, invited: true } });
   if (error) {
     console.error(`Failed to update the demo user's password: ${error.message}`);
     process.exit(1);
   }
   console.log(`Demo user already existed - password updated: ${email} (${already.id})`);
 } else {
-  const { data, error } = await supabase.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name: "Demo Reviewer" } });
+  const { data, error } = await supabase.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name: "Demo Reviewer" }, app_metadata: { invited: true } });
   if (error) {
     console.error(`Failed to create the demo user: ${error.message}`);
     process.exit(1);

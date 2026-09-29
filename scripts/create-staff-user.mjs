@@ -25,7 +25,7 @@ if (!email || !password) {
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
 
-const { data, error } = await supabase.auth.admin.createUser({ email, password, email_confirm: true, app_metadata: { is_staff: true } });
+const { data, error } = await supabase.auth.admin.createUser({ email, password, email_confirm: true, app_metadata: { is_staff: true, invited: true } });
 if (error) {
   console.error(`Failed to create staff user: ${error.message}`);
   process.exit(1);

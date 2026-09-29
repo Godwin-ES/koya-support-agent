@@ -5,3 +5,4 @@ export * from "./handover";
 export * from "./conversation-token";
 export * from "./limits";
 export * from "./vapi";
+export * from "./conversation-summary";

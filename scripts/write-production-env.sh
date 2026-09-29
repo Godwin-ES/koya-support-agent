@@ -17,7 +17,9 @@ APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # our own backend processes, nothing browser-facing) keeps this script
 # simple and matches env_file: .env being used by both services in
 # docker-compose.yml.
-NAMES=(NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY ANTHROPIC_API_KEY ANTHROPIC_MODEL MCP_SERVER_TOKEN CONVERSATION_TOKEN_SECRET VAPI_SERVER_SECRET)
+NAMES=(NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY ANTHROPIC_API_KEY ANTHROPIC_MODEL MCP_SERVER_TOKEN CONVERSATION_TOKEN_SECRET VAPI_SERVER_SECRET APP_URL DISCORD_ALERTS_WEBHOOK_URL DISCORD_ACTIVITY_WEBHOOK_URL)
+# Written when present in .env.local, skipped otherwise (each has a default).
+OPTIONAL_NAMES=(DAILY_SPEND_ALERT_USD)
 
 env_file="$(mktemp)"
 trap 'rm -f "$env_file"' EXIT
@@ -25,6 +27,11 @@ for name in "${NAMES[@]}"; do
   line="$(grep -E "^${name}=" "$APP_DIR/.env.local" | tail -1 || true)"
   [ -n "$line" ] || { echo "$name is missing from .env.local" >&2; exit 1; }
   echo "$line" >> "$env_file"
+done
+written=("${NAMES[@]}")
+for name in "${OPTIONAL_NAMES[@]}"; do
+  line="$(grep -E "^${name}=." "$APP_DIR/.env.local" | tail -1 || true)"
+  [ -n "$line" ] && { echo "$line" >> "$env_file"; written+=("$name"); }
 done
 cat >> "$env_file" <<EOF
 REPLAY_MODE=false
@@ -34,4 +41,4 @@ MCP_SERVER_URL=http://mcp-server:8090/mcp
 EOF
 
 ssh -i "$KEY" -o StrictHostKeyChecking=accept-new "$USER_AT" 'mkdir -p ~/koya-week6 && umask 077 && cat > ~/koya-week6/.env && chmod 600 ~/koya-week6/.env' < "$env_file"
-echo "Wrote ~/koya-week6/.env on $HOST with: ${NAMES[*]} REPLAY_MODE AGENT_SERVER_PORT MCP_PORT MCP_SERVER_URL"
+echo "Wrote ~/koya-week6/.env on $HOST with: ${written[*]} REPLAY_MODE AGENT_SERVER_PORT MCP_PORT MCP_SERVER_URL"

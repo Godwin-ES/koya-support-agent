@@ -26,10 +26,13 @@ test.beforeAll(async () => {
   // registered" message (an unserialized duplicate-key race, not a real
   // failure), so the real check is simply: does the account exist now,
   // whoever created it.
-  const { error } = await admin.auth.admin.createUser({ email: CALLER_EMAIL, password: CALLER_PASSWORD, email_confirm: true, user_metadata: { name: "E2E Voice Test" } });
+  const { error } = await admin.auth.admin.createUser({ email: CALLER_EMAIL, password: CALLER_PASSWORD, email_confirm: true, user_metadata: { name: "E2E Voice Test" }, app_metadata: { invited: true } });
   if (!error) return;
   const { data } = await admin.auth.admin.listUsers();
-  if (!data.users.some((u) => u.email === CALLER_EMAIL)) throw error;
+  const existing = data.users.find((u) => u.email === CALLER_EMAIL);
+  if (!existing) throw error;
+  // The app is invite-only - an account made before that needs the flag too.
+  if (existing.app_metadata?.invited !== true) await admin.auth.admin.updateUserById(existing.id, { app_metadata: { ...existing.app_metadata, invited: true } });
 });
 
 async function signInAndGoHome(page: Page) {

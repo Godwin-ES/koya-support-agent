@@ -33,9 +33,10 @@ describe("sign-in page", () => {
     expect(mockDemoSignIn).toHaveBeenCalled();
   });
 
-  it("links to sign-up for a visitor without an account", async () => {
+  it("offers no sign-up - access is by invitation only", async () => {
     const { default: SignInPage } = await import("@/app/sign-in/page");
     render(<SignInPage />);
-    expect(screen.getByRole("link", { name: "Sign up" })).toHaveAttribute("href", "/sign-up");
+    expect(screen.queryByRole("link", { name: /sign up/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/access is by invitation/i)).toBeInTheDocument();
   });
 });
