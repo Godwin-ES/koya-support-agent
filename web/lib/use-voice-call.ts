@@ -27,12 +27,38 @@ export interface TranscriptTurn {
 }
 
 export interface EndOfCallSummary {
-  /** The tool's own follow_up_summary (SYSTEM-DESIGN.md §11.7), when a ticket or escalation was created this call. */
+  /** What happens next, when this call created an escalation or a ticket (SYSTEM-DESIGN.md §11.7) - null otherwise. */
   followUpSummary: string | null;
+  /** That escalation's or ticket's reference, for the caller to quote. */
+  reference?: string | null;
   /** Set when useVoiceCall itself ended the call after 30s of caller silence, rather than the caller hanging up (SYSTEM-DESIGN.md §9 - Vapi has no such field itself, confirmed against its live API in Task 13, so this is enforced client-side). */
   endedDueToSilence: boolean;
   /** How long the call was connected, when it connected at all. */
   durationSeconds?: number | null;
+}
+
+interface Outcome {
+  escalation: { reference: string; category: string; callback_time: string | null } | null;
+  ticket: { reference: string; category: string } | null;
+}
+
+function formatCallback(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit" });
+}
+
+async function fetchOutcome(conversation: { id: string; token: string }): Promise<Pick<EndOfCallSummary, "followUpSummary" | "reference"> | null> {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/conversations/${conversation.id}/outcome`, { headers: { Authorization: `Bearer ${conversation.token}` } });
+  if (!res.ok) return null;
+  const outcome = (await res.json()) as Outcome;
+  if (outcome.escalation) {
+    const { callback_time, reference } = outcome.escalation;
+    return {
+      reference,
+      followUpSummary: callback_time ? `A specialist will call you on ${formatCallback(callback_time)}, and follow up by email.` : "A specialist will follow up by email within one business day.",
+    };
+  }
+  if (outcome.ticket) return { reference: outcome.ticket.reference, followUpSummary: "Our support team will look into this and follow up by email." };
+  return null;
 }
 
 /** SYSTEM-DESIGN.md §9: the two client-visible call limits. Vapi enforces `MAX_CALL_SECONDS` itself server-side (`maxDurationSeconds` on the assistant) - this is only the matching visual countdown. `SILENCE_TIMEOUT_MS` has no Vapi-side equivalent at all (verified against its live API, Task 13) and is enforced entirely here. */
@@ -42,8 +68,6 @@ const SILENCE_TIMEOUT_MS = 30_000;
 /** `accessToken` is the signed-in caller's Supabase session token (from `page.tsx`'s server-side session check) - agent-server verifies it (`supabase.auth.getUser(token)`) to derive `caller_ref` for the daily limit, replacing the old IP+browser-id hash now that every caller has a real account. */
 export function useVoiceCall(accessToken: string) {
   const [callState, setCallState] = useState<CallState>("idle");
-  const [callerText, setCallerText] = useState("");
-  const [agentText, setAgentText] = useState("");
   const [fullTranscript, setFullTranscript] = useState<TranscriptTurn[]>([]);
   const [endOfCallSummary, setEndOfCallSummary] = useState<EndOfCallSummary | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
@@ -79,16 +103,19 @@ export function useVoiceCall(accessToken: string) {
       });
       vapi.on("speech-end", () => setCallState((s) => (s === "agent_speaking" ? "listening" : s)));
       vapi.on("call-end", () => {
-        // "What was covered... taken from the tool's follow_up_summary"
-        // (SYSTEM-DESIGN.md §11.7): the agent is instructed (system-prompt.ts)
-        // to speak that summary back to the caller as its own last reply
-        // when it escalates, so the last assistant transcript line already
-        // carries it - no separate authenticated fetch needed to show it.
-        setAgentText((lastAgentLine) => {
-          const durationSeconds = callStartedAtRef.current ? Math.round((Date.now() - callStartedAtRef.current) / 1000) : null;
-          setEndOfCallSummary({ followUpSummary: lastAgentLine || null, endedDueToSilence: endedDueToSilenceRef.current, durationSeconds });
-          return lastAgentLine;
-        });
+        // "What happens next" comes from the records this call created
+        // (SYSTEM-DESIGN.md §11.7), fetched once it ends - not from the
+        // agent's last spoken line, which Vapi delivers a clause at a time
+        // (a live call showed a bare "transfers." here).
+        const durationSeconds = callStartedAtRef.current ? Math.round((Date.now() - callStartedAtRef.current) / 1000) : null;
+        const base: EndOfCallSummary = { followUpSummary: null, reference: null, endedDueToSilence: endedDueToSilenceRef.current, durationSeconds };
+        setEndOfCallSummary(base);
+        const conversation = conversationRef.current;
+        if (conversation) {
+          void fetchOutcome(conversation)
+            .then((outcome) => outcome && setEndOfCallSummary({ ...base, ...outcome }))
+            .catch(() => undefined);
+        }
         setPartial(null);
         setCallState((s) => (s === "ending" ? "ended" : "dropped"));
       });
@@ -113,8 +140,6 @@ export function useVoiceCall(accessToken: string) {
           return;
         }
         setPartial(null);
-        if (message.role === "user") setCallerText(message.transcript);
-        else setAgentText(message.transcript);
         setFullTranscript((prev) => [...prev, { role: message.role, text: message.transcript }]);
       });
       vapiRef.current = vapi;
@@ -124,8 +149,6 @@ export function useVoiceCall(accessToken: string) {
 
   const startCall = useCallback(async () => {
     setCallState("requesting");
-    setCallerText("");
-    setAgentText("");
     setFullTranscript([]);
     setEndOfCallSummary(null);
     setRemainingSeconds(null);
@@ -221,5 +244,5 @@ export function useVoiceCall(accessToken: string) {
     };
   }, []);
 
-  return { callState, callerText, agentText, fullTranscript, partial, endOfCallSummary, remainingSeconds, startCall, endCall, subscribeToVolume };
+  return { callState, fullTranscript, partial, endOfCallSummary, remainingSeconds, startCall, endCall, subscribeToVolume };
 }

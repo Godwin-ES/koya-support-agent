@@ -31,6 +31,7 @@ import {
   type Channel,
 } from "@core/agent";
 import { currentTurnSeq } from "@core/mcp";
+import { caseReference } from "@core/domain/case-reference";
 import { finalizeConversation } from "./lifecycle";
 import { OpsNotifier } from "./ops";
 import { poolFor, SessionCapacityError, SessionManager } from "./session-manager";
@@ -177,6 +178,31 @@ export function createApp(deps: AppDeps) {
       console.error("POST /api/conversations failed:", err);
       res.status(500).json({ error: "internal error" });
     }
+  });
+
+  // -- GET /api/conversations/:id/outcome -------------------------------------
+  // What the end-of-call card shows (SYSTEM-DESIGN.md §11.7): whether this
+  // conversation created an escalation or a ticket, its reference, and the
+  // callback time. Authorised by the conversation's own signed token, in the
+  // Authorization header, so only the caller who held the conversation can
+  // read it.
+  app.get("/api/conversations/:id/outcome", async (req: Request, res: Response) => {
+    const conversationId = String(req.params.id);
+    const token = req.header("authorization")?.match(/^Bearer (.+)$/i)?.[1];
+    if (!token || !verifyConversationToken(deps.conversationTokenSecret, token, conversationId)) {
+      res.status(401).json({ error: "invalid or expired token" });
+      return;
+    }
+    const [escalation, ticket] = await Promise.all([
+      supabase.from("escalations").select("id, category, callback_time").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("support_tickets").select("id, category").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    ]);
+    const esc = escalation.data as { id: string; category: string; callback_time: string | null } | null;
+    const tkt = ticket.data as { id: string; category: string } | null;
+    res.json({
+      escalation: esc ? { reference: caseReference("escalation", esc.id), category: esc.category, callback_time: esc.callback_time } : null,
+      ticket: tkt ? { reference: caseReference("ticket", tkt.id), category: tkt.category } : null,
+    });
   });
 
   // -- POST /vapi/chat/completions -------------------------------------------

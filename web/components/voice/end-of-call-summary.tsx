@@ -29,6 +29,11 @@ export function EndOfCallSummary({ summary, className }: { summary: EndOfCallSum
       <div className="mt-4 border-t border-[var(--color-border)] pt-4">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">{summary.followUpSummary ? "What happens next" : "Summary"}</p>
         <p className="mt-1.5 text-sm leading-relaxed text-[var(--color-text)]">{summary.followUpSummary ?? "Thanks for calling. If you need more help, start a new call."}</p>
+        {summary.reference && (
+          <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+            Reference <span className="font-mono font-semibold text-[var(--color-text)]">{summary.reference}</span>
+          </p>
+        )}
       </div>
     </div>
   );

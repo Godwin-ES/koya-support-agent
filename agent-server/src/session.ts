@@ -204,7 +204,31 @@ export class Session {
         if (opts.interrupted?.()) {
           interrupted = true;
           await this.interrupt();
-          break;
+          // The caller talked over the reply or hung up mid-answer - still a
+          // real turn, so it's recorded with what was said so far, flagged
+          // interrupted. Its cost arrives with the session's next result
+          // message and is counted in that turn's delta.
+          const seq = await currentTurnSeq(this.toolContext);
+          const recorded = await readTurnToolCalls(this.toolContext, seq);
+          const decision = decideTurn({ toolCalls: recorded, declared });
+          const ttft_ms = firstTokenAt !== null ? Math.round(firstTokenAt - startedAt) : null;
+          const total_ms = Math.round(performance.now() - startedAt);
+          await this.writeBuffer.writeOrBuffer("conversation_turns", {
+            conversation_id: this.conversationId,
+            seq,
+            user_transcript: userText,
+            assistant_response: summarize(assistantResponse, 4000),
+            answer_type: decision.answer_type,
+            answer_type_inferred: decision.inferred,
+            confidence: decision.confidence,
+            confidence_note: decision.confidence_note,
+            interrupted: true,
+            ttft_ms,
+            total_ms,
+            cost_usd: 0,
+          });
+          yield { kind: "done", seq, answer_type: decision.answer_type, confidence: decision.confidence, interrupted: true, ttft_ms, total_ms, cost_usd: 0 };
+          return;
         }
 
         if (message.type === "stream_event" && message.event.type === "content_block_delta" && message.event.delta.type === "text_delta") {

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { deriveCaseActions } from "@core/domain/case-actions";
+import { caseReference } from "@core/domain/case-reference";
 import { TICKET_STATUS, ESCALATION_STATUS } from "@core/domain/status";
 import type { CaseItem } from "@/lib/server/console-data";
 import { updateCaseStatus } from "@/app/console/(authenticated)/actions";
@@ -82,7 +83,10 @@ export function QueueClient({ initialCases }: { initialCases: CaseItem[] }) {
       {openCase && (
         <aside aria-label="Case detail" className="w-80 flex-shrink-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[var(--shadow-md)]">
           <div className="flex items-start justify-between">
-            <h2 className="text-sm font-semibold capitalize">{openCase.kind}</h2>
+            <div>
+              <h2 className="text-sm font-semibold capitalize">{openCase.kind}</h2>
+              <p className="mt-0.5 font-mono text-xs text-[var(--color-text-muted)]">{caseReference(openCase.kind, openCase.id)}</p>
+            </div>
             <button type="button" onClick={() => router.back()} className="text-xs font-medium text-[var(--color-accent)] [transition:opacity_var(--transition-fast)] hover:opacity-80 hover:underline">
               Back
             </button>

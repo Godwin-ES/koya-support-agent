@@ -24,6 +24,7 @@ loadEnv({ path: path.resolve(import.meta.dirname, "../../.env.local") });
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { serviceRoleClient } from "./db";
 import { createServer } from "./server";
+import { warmEmbeddings } from "@core/knowledge/embeddings";
 
 const PORT = Number(process.env.MCP_PORT ?? 8090);
 const TOKEN = process.env.MCP_SERVER_TOKEN;
@@ -78,4 +79,11 @@ const httpServer = createHttpServer((req, res) => {
 
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`mcp-server (http): listening on http://0.0.0.0:${PORT}/mcp`);
+  // Load the embedding model now, not during the first caller's knowledge
+  // search - a live call after a restart spent 5s in search_knowledge (and
+  // Vapi logged a "hang") paying this load cost mid-turn.
+  const startedAt = Date.now();
+  warmEmbeddings()
+    .then(() => console.log(`mcp-server: embedding model ready in ${Date.now() - startedAt}ms`))
+    .catch((err) => console.error("mcp-server: embedding warm-up failed:", err instanceof Error ? err.message : err));
 });

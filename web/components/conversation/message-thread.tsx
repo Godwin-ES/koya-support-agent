@@ -10,7 +10,7 @@ export interface ThreadMessage {
   text: string;
 }
 
-type ThreadItem = ThreadMessage & { kind: "final" | "live" | "typing" | "streaming"; key: string };
+type ThreadItem = ThreadMessage & { kind: "final" | "live" | "typing" | "streaming"; key: string; liveTail?: string };
 
 export interface MessageThreadProps {
   messages: ThreadMessage[];
@@ -33,11 +33,27 @@ export function MessageThread({ messages, live, agentTyping, streamingLast, user
   const stickToBottomRef = useRef(true);
   const [scrolledAway, setScrolledAway] = useState(false);
 
-  const items: ThreadItem[] = messages
-    .filter((m, i) => !(streamingLast && i === messages.length - 1 && m.role === "assistant" && m.text === ""))
-    .map((m, i, arr) => ({ ...m, kind: streamingLast && i === arr.length - 1 && m.role === "assistant" ? "streaming" : "final", key: `m${i}` }));
-  // Same key the final will get, so finishing a sentence doesn't remount (and re-animate) its bubble.
-  if (live?.text) items.push({ ...live, kind: "live", key: `m${messages.length}` });
+  // Voice transcripts arrive a sentence or clause at a time; consecutive
+  // lines from one speaker read as one message, so they share one bubble.
+  const items: ThreadItem[] = [];
+  messages.forEach((m, i) => {
+    if (streamingLast && i === messages.length - 1 && m.role === "assistant" && m.text === "") return;
+    const kind = streamingLast && i === messages.length - 1 && m.role === "assistant" ? "streaming" : "final";
+    const last = items[items.length - 1];
+    if (last && last.role === m.role && last.kind === "final") {
+      last.text = `${last.text} ${m.text}`.trim();
+      last.kind = kind;
+      return;
+    }
+    items.push({ ...m, kind, key: `m${i}` });
+  });
+  if (live?.text) {
+    const last = items[items.length - 1];
+    // Words still being spoken continue the speaker's current bubble; a new
+    // speaker's get a bubble keyed as the final will be, so it doesn't remount.
+    if (last && last.role === live.role && last.kind === "final") last.liveTail = live.text;
+    else items.push({ ...live, kind: "live", key: `m${messages.length}` });
+  }
   if (agentTyping && !(live?.role === "assistant" && live.text)) items.push({ role: "assistant", text: "", kind: "typing", key: "typing" });
 
   const groups: ThreadItem[][] = [];
@@ -127,10 +143,16 @@ function Bubble({ item }: { item: ThreadItem }) {
     );
   }
 
-  const caret = item.kind === "live" || item.kind === "streaming";
+  const caret = item.kind === "live" || item.kind === "streaming" || Boolean(item.liveTail);
   return (
     <p aria-hidden={item.kind === "live" ? true : undefined} className={cn(base, tone, item.kind === "live" && "opacity-70")}>
       {item.text}
+      {item.liveTail && (
+        <span aria-hidden="true" className="opacity-60">
+          {" "}
+          {item.liveTail}
+        </span>
+      )}
       {caret && <span aria-hidden="true" className={cn("ml-0.5 inline-block h-[1em] w-[2px] translate-y-[2px] animate-caret rounded-full", isUser ? "bg-white/80" : "bg-[var(--color-accent)]")} />}
     </p>
   );

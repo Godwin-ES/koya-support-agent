@@ -195,6 +195,40 @@ describe("POST /api/conversations", () => {
   );
 });
 
+describe("GET /api/conversations/:id/outcome", () => {
+  it("reports the escalation this conversation created, with its reference and callback time", async () => {
+    const { body } = await createConversation(await newCallerToken(), "web_text");
+    const conversationId = body.conversation_id as string;
+    const { data: ticket } = await supabase.from("support_tickets").insert({ conversation_id: conversationId, category: "account", priority: "high", summary: "s" }).select("id").single();
+    const { data: esc } = await supabase
+      .from("escalations")
+      .insert({ conversation_id: conversationId, ticket_id: ticket!.id, user_name: "A", user_email: "a@example.com", category: "account", reason: "r", call_booked: true, callback_time: "2026-10-01T09:00:00Z" })
+      .select("id")
+      .single();
+    const res = await fetch(`${baseUrl}/api/conversations/${conversationId}/outcome`, { headers: { Authorization: `Bearer ${body.token}` } });
+    const outcome = (await res.json()) as { escalation: { reference: string; callback_time: string } };
+    expect(outcome.escalation.reference).toBe(`ESC-${(esc!.id as string).replace(/-/g, "").slice(0, 8).toUpperCase()}`);
+    expect(new Date(outcome.escalation.callback_time).toISOString()).toBe("2026-10-01T09:00:00.000Z");
+    sessionManager.close(conversationId);
+  });
+
+  it("reports nothing for a conversation that created neither", async () => {
+    const { body } = await createConversation(await newCallerToken(), "web_text");
+    const res = await fetch(`${baseUrl}/api/conversations/${body.conversation_id}/outcome`, { headers: { Authorization: `Bearer ${body.token}` } });
+    expect(await res.json()).toEqual({ escalation: null, ticket: null });
+    sessionManager.close(body.conversation_id as string);
+  });
+
+  it("refuses another conversation's token", async () => {
+    const a = await createConversation(await newCallerToken(), "web_text");
+    const b = await createConversation(await newCallerToken(), "web_text");
+    const res = await fetch(`${baseUrl}/api/conversations/${a.body.conversation_id}/outcome`, { headers: { Authorization: `Bearer ${b.body.token}` } });
+    expect(res.status).toBe(401);
+    sessionManager.close(a.body.conversation_id as string);
+    sessionManager.close(b.body.conversation_id as string);
+  });
+});
+
 describe("POST /vapi/chat/completions", () => {
   it("rejects a request with a bad X-Vapi-Server-Secret", async () => {
     const res = await fetch(`${baseUrl}/vapi/chat/completions`, {

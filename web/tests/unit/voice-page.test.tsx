@@ -19,8 +19,6 @@ vi.mock("@/lib/use-usage-limits", () => ({ useUsageLimits: () => null }));
 
 interface HookValue {
   callState: CallState;
-  callerText: string;
-  agentText: string;
   fullTranscript: TranscriptTurn[];
   partial: TranscriptTurn | null;
   endOfCallSummary: EndOfCallSummary | null;
@@ -39,8 +37,6 @@ async function renderAtState(callState: CallState, overrides: Partial<HookValue>
 function baseHookValue(callState: CallState): HookValue {
   return {
     callState,
-    callerText: "",
-    agentText: "",
     fullTranscript: [],
     partial: null,
     endOfCallSummary: null,

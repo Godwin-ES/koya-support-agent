@@ -139,6 +139,11 @@ describe("SessionManager", () => {
     for await (const event of session.runTurn("Tell me something long", { interrupted: () => ++seen >= 2 })) events.push(event);
 
     expect(interrupted).toBe(true);
+    // Still recorded, with what was said before the interruption (a real
+    // live call's hang-up mid-answer used to leave no turn at all).
+    const { data } = await supabase.from("conversation_turns").select("user_transcript, assistant_response, interrupted").eq("conversation_id", conversationId).single();
+    expect(data).toEqual({ user_transcript: "Tell me something long", assistant_response: "Partial reply", interrupted: true });
+    expect(events.at(-1)).toMatchObject({ kind: "done", interrupted: true });
   });
 
   it("enforces the concurrency cap (at most 3 sessions at once)", async () => {
