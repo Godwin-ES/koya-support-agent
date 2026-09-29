@@ -1,0 +1,8 @@
+# Task 13 (SYSTEM-DESIGN.md §12): free HTTPS via sslip.io + Caddy's own
+# automatic Let's Encrypt cert issuance/renewal. agent-server owns every
+# public route (/health, /api/conversations, /api/text, /api/text/end,
+# /vapi/chat/completions, /vapi/events) and checks its own credential on
+# each one, so a single reverse_proxy for everything is correct here.
+129-146-79-96.sslip.io {
+	reverse_proxy agent-server:8091
+}

@@ -1,0 +1,161 @@
+// The seven MCP tools (SYSTEM-DESIGN.md §5, mcp-tool-requirements.md),
+// wired to the core business logic in @core/mcp and logged through
+// callWithLogging so no handler can skip the tool_calls record.
+//
+// No z.record anywhere in an input schema (week 5's regression: one field
+// the SDK can't convert to JSON Schema silently drops every tool from
+// tools/list) - log_conversation_event's `metadata` is `z.unknown()`
+// instead, which converts fine and still accepts any JSON object.
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import type { CreateSupportTicketResult, LogConversationEventResult, ToolContext } from "@core/mcp";
+import {
+  callWithLogging,
+  createEscalation,
+  createSupportTicket,
+  logConversationEvent,
+  lookupCustomer,
+  lookupPayout,
+  lookupTransaction,
+  matchesConversation,
+  searchKnowledge,
+} from "@core/mcp";
+
+function textResult(value: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(value) }] };
+}
+
+const REFUSED_CONVERSATION_MISMATCH = { refused: true, reason: "conversation_id_mismatch" as const };
+
+export function createServer(context: ToolContext): McpServer {
+  const server = new McpServer({ name: "relaypay-support-mcp", version: "1.0.0" });
+
+  server.registerTool(
+    "search_knowledge",
+    {
+      description: "Retrieve approved RelayPay knowledge relevant to the caller's question.",
+      inputSchema: { query: z.string().min(1) },
+    },
+    async (input) => textResult(await callWithLogging(context, "search_knowledge", "retrieve knowledge for the caller's question", input, async () => {
+      const result = await searchKnowledge(context, input);
+      return { status: result.found ? "ok" : "not_found", result };
+    })),
+  );
+
+  server.registerTool(
+    "lookup_customer",
+    {
+      description: "Verify and look up a customer - needs two matching identifiers out of customer ID, email, company name and contact name.",
+      inputSchema: {
+        customer_id: z.string().optional(),
+        email: z.string().optional(),
+        company_name: z.string().optional(),
+        contact_name: z.string().optional(),
+      },
+    },
+    async (input) => textResult(await callWithLogging(context, "lookup_customer", "verify the caller and look up their account", input, async () => {
+      const result = await lookupCustomer(context, input);
+      return { status: result.found ? "ok" : "not_found", result };
+    })),
+  );
+
+  server.registerTool(
+    "lookup_transaction",
+    {
+      description: "Look up a transaction by its reference. Full detail only for a verified caller.",
+      inputSchema: { transaction_id: z.string().min(1) },
+    },
+    async (input) => textResult(await callWithLogging(context, "lookup_transaction", "look up a transaction the caller referenced", input, async () => {
+      const result = await lookupTransaction(context, input);
+      return { status: result.found ? "ok" : "not_found", result };
+    })),
+  );
+
+  server.registerTool(
+    "lookup_payout",
+    {
+      description: "Look up a payout by payout ID or transaction ID. Full detail only for a verified caller.",
+      inputSchema: {
+        payout_id: z.string().optional(),
+        transaction_id: z.string().optional(),
+      },
+    },
+    async (input) => textResult(await callWithLogging(context, "lookup_payout", "look up a payout the caller referenced", input, async () => {
+      const result = await lookupPayout(context, input);
+      return { status: result.found ? "ok" : "not_found", result };
+    })),
+  );
+
+  server.registerTool(
+    "create_support_ticket",
+    {
+      description: "Log an issue for support follow-up. Idempotent per conversation and category.",
+      inputSchema: {
+        customer_id: z.string().optional(),
+        category: z.string(),
+        priority: z.string(),
+        summary: z.string().min(1),
+        conversation_id: z.string().optional(),
+      },
+    },
+    async (input) => textResult(await callWithLogging<CreateSupportTicketResult | typeof REFUSED_CONVERSATION_MISMATCH>(context, "create_support_ticket", "log an issue for support follow-up", input, async () => {
+      if (!matchesConversation(context, input.conversation_id)) return { status: "refused", result: REFUSED_CONVERSATION_MISMATCH };
+      const result = await createSupportTicket(context, input);
+      return { status: "refused" in result ? "refused" : "ok", result };
+    })),
+  );
+
+  server.registerTool(
+    "create_escalation",
+    {
+      description: "Hand off to human support. Idempotent per conversation.",
+      inputSchema: {
+        ticket_id: z.string().optional(),
+        customer_id: z.string().optional(),
+        user_name: z.string().min(1),
+        user_email: z.string(),
+        category: z.string(),
+        reason: z.string().min(1),
+        preferred_time: z.string().optional(),
+      },
+    },
+    async (input) => textResult(await callWithLogging(context, "create_escalation", "hand the caller off to human support", input, async () => {
+      const result = await createEscalation(context, input);
+      return { status: "refused" in result ? "refused" : "ok", result };
+    })),
+  );
+
+  server.registerTool(
+    "log_conversation_event",
+    {
+      description: "Log an agent decision or other notable action.",
+      inputSchema: {
+        conversation_id: z.string().optional(),
+        event_type: z.string().min(1),
+        summary: z.string().min(1),
+        metadata: z.unknown().optional(),
+      },
+    },
+    async (input) => textResult(await callWithLogging<LogConversationEventResult | typeof REFUSED_CONVERSATION_MISMATCH>(context, "log_conversation_event", "log an agent decision or notable action", input, async () => {
+      if (!matchesConversation(context, input.conversation_id)) return { status: "refused", result: REFUSED_CONVERSATION_MISMATCH };
+      const result = await logConversationEvent(context, {
+        event_type: input.event_type,
+        summary: input.summary,
+        metadata: (input.metadata as Record<string, unknown> | undefined) ?? {},
+      });
+      return { status: "ok", result };
+    })),
+  );
+
+  return server;
+}
+
+export const TOOL_NAMES = [
+  "search_knowledge",
+  "lookup_customer",
+  "lookup_transaction",
+  "lookup_payout",
+  "create_support_ticket",
+  "create_escalation",
+  "log_conversation_event",
+] as const;

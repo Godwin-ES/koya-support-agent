@@ -1,0 +1,28 @@
+{
+  "name": "mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/http.ts",
+    "dev:stdio": "tsx src/stdio.ts",
+    "start": "tsx src/http.ts",
+    "build": "echo \"no separate build step - runs via tsx directly in the Dockerfile\" && exit 0",
+    "lint": "echo \"(no lint config yet for mcp-server)\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@core/support-agent": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "@supabase/supabase-js": "^2.117.2",
+    "dotenv": "^18.0.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.15"
+  }
+}

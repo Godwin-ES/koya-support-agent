@@ -1,0 +1,11 @@
+packages:
+  - packages/*
+  - mcp-server
+  - agent-server
+  - web
+  - evals
+allowBuilds:
+  esbuild: true
+  onnxruntime-node: true
+  protobufjs: true
+  unrs-resolver: true

@@ -1,0 +1,22 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+dist/
+.next/
+coverage/
+*.log
+test-results/
+playwright-report/
+blob-report/
+.claude/settings.local.json
+
+# Recordings of real (live) sessions and voice calls: no test replays them,
+# and they hold everything the agent read/said plus local paths. Test
+# fixtures stay tracked.
+tests/fixtures/agent-sdk/live/
+tests/fixtures/voice/live/
+# Throwaway probe scripts
+*.tmp.ts
+# Task 2 latency-spike measurement output (raw timing data, not evidence itself - the numbers that matter go in BUILD-NOTES.md)
+.spike-results/

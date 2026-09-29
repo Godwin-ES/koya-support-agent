@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/*
+ * Design tokens (SYSTEM-DESIGN.md §11.2). RelayPay's brand direction calls
+ * for a light, off-white interface - professional, calm, minimal,
+ * trustworthy - so unlike a typical app there is deliberately no dark
+ * theme here: one light palette is the single source of truth for colour
+ * everywhere (brand-direction.md: "Avoid... over-branding", "make the
+ * interface simpler and more neutral" when unsure).
+ */
+:root {
+  --color-bg: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-surface-2: #f0f2f5;
+  --color-surface-3: #e3e6eb;
+  --color-text: #1a2233;
+  --color-text-muted: #5b6472;
+  --color-border: #dde1e6;
+
+  /* Primary: deep blue. Accent: teal blue, used sparingly (brand-direction.md). */
+  --color-primary: #14315c;
+  --color-primary-hover: #0e2444;
+  --color-primary-contrast: #ffffff;
+  --color-accent: #1d7a82;
+  --color-accent-hover: #166167;
+  --color-accent-contrast: #ffffff;
+
+  --color-info-bg: #eaf1fb;
+  --color-info-text: #1d4e89;
+  --color-warning-bg: #fdf3e7;
+  --color-warning-text: #8a5a17;
+  --color-success-bg: #e9f5ef;
+  --color-success-text: #1f7a4d;
+  --color-danger-bg: #fbeaea;
+  --color-danger-text: #b23b3b;
+  --color-danger-border: #e8b4b4;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+
+  /* One spacing scale (SYSTEM-DESIGN.md §11.2) - Tailwind's own 4px steps are already this, named here so a component references --space-*, not a bare arbitrary value. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+
+  /* One shadow scale - restrained, since the brand calls for "calm" and "minimal", not a typical app's heavier elevation. */
+  --shadow-sm: 0 1px 2px rgb(26 34 51 / 0.06);
+  --shadow-md: 0 2px 8px rgb(26 34 51 / 0.08);
+  --shadow-lg: 0 8px 24px rgb(26 34 51 / 0.12);
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* SYSTEM-DESIGN.md §11.10: "no interaction animation lasts over 200ms" and prefers-reduced-motion is respected everywhere, not just per-component. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

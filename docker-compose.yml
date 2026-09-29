@@ -1,0 +1,38 @@
+# Task 13 (SYSTEM-DESIGN.md §12): agent-server + mcp-server + Caddy on the
+# Oracle VM. agent-server is the only service Caddy proxies to - mcp-server
+# publishes no port and is reachable only from agent-server, over this
+# compose network (see mcp-server/src/http.ts's own comment on why binding
+# 0.0.0.0 there still never exposes it publicly).
+services:
+  agent-server:
+    build:
+      context: .
+      dockerfile: agent-server/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - mcp-server
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: mcp-server/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - agent-server
+
+volumes:
+  caddy_data:
+  caddy_config:
