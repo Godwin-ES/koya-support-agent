@@ -12,7 +12,7 @@
 // reads environment variables and actually calls `.listen()`.
 import express, { type Request, type Response } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { checkVisitorDailyLimit, countVisitorConversationsToday, DAILY_CALL_LIMIT, formatChatCompletionChunk, hashVisitor, issueConversationToken, newUserMessage, parseChatCompletionsBody, parseVapiEventBody, SSE_DONE, verifyConversationToken } from "@core/agent";
+import { checkVisitorDailyLimit, countVisitorConversationsToday, DAILY_CALL_LIMIT, formatChatCompletionChunk, issueConversationToken, newUserMessage, parseChatCompletionsBody, parseVapiEventBody, SSE_DONE, verifyConversationToken } from "@core/agent";
 import { currentTurnSeq } from "@core/mcp";
 import { SessionCapacityError, SessionManager } from "./session-manager";
 
@@ -20,7 +20,6 @@ export interface AppDeps {
   supabase: SupabaseClient;
   sessionManager: SessionManager;
   conversationTokenSecret: string;
-  visitorHashSalt: string;
   vapiServerSecret?: string;
   model: string;
   maxConcurrentSessions?: number;
@@ -61,14 +60,29 @@ export function createApp(deps: AppDeps) {
     res.json({ ok: true, sessions: sessionManager.size, model: deps.model });
   });
 
+  // Every caller now signs in (Task 13/14 - the voice page moved off its
+  // original fully-anonymous design), so caller_ref is the real
+  // auth.users.id instead of a hashed IP+browser-id. `supabase.auth.getUser`
+  // makes a real network call to validate the token against Supabase Auth
+  // (authoritative, not a local JWT decode) - the same service-role client
+  // used everywhere else works fine for this (Task 13: confirmed against
+  // Supabase's own docs that client type isn't restricted for this call).
+  async function verifyCaller(accessToken: unknown): Promise<string | null> {
+    if (typeof accessToken !== "string" || !accessToken) return null;
+    const { data, error } = await supabase.auth.getUser(accessToken);
+    if (error || !data.user) return null;
+    return data.user.id;
+  }
+
   // -- GET /api/limits -------------------------------------------------------
   // Lets the voice page show "X of 3 calls used today" before the caller
   // ever hits the limit, not just the reactive "limit reached" message.
-  // Same caller_ref hashing as /api/conversations - a browser_id with no
-  // real call yet still gets a real (0-used) answer.
   app.get("/api/limits", async (req: Request, res: Response) => {
-    const browserId = typeof req.query.browser_id === "string" ? req.query.browser_id : undefined;
-    const callerRef = hashVisitor(deps.visitorHashSalt, req.ip ?? "unknown", browserId);
+    const callerRef = await verifyCaller(req.query.access_token);
+    if (!callerRef) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
     try {
       const used = await countVisitorConversationsToday(supabase, callerRef);
       res.json({ used, limit: DAILY_CALL_LIMIT });
@@ -80,9 +94,13 @@ export function createApp(deps: AppDeps) {
 
   // -- POST /api/conversations ---------------------------------------------
   app.post("/api/conversations", async (req: Request, res: Response) => {
-    const body = req.body as { channel?: "web_voice" | "web_text"; browser_id?: string };
+    const body = req.body as { channel?: "web_voice" | "web_text"; access_token?: string };
     const channel = body.channel ?? "web_voice";
-    const callerRef = hashVisitor(deps.visitorHashSalt, req.ip ?? "unknown", body.browser_id);
+    const callerRef = await verifyCaller(body.access_token);
+    if (!callerRef) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
 
     try {
       const limit = await checkVisitorDailyLimit(supabase, callerRef);

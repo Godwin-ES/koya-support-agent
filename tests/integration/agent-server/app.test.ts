@@ -13,15 +13,31 @@ import { createApp } from "../../../agent-server/src/app";
 import { SessionManager } from "../../../agent-server/src/session-manager";
 import type { SessionOptions } from "../../../agent-server/src/session";
 import { issueConversationToken } from "@core/agent/conversation-token";
-import { serviceRoleClient } from "../helpers/db";
+import { serviceRoleClient, anonClient } from "../helpers/db";
 
 const CONVERSATION_TOKEN_SECRET = "test-conversation-token-secret";
-const VISITOR_HASH_SALT = "test-visitor-hash-salt";
 const VAPI_SERVER_SECRET = "test-vapi-server-secret";
 const MODEL = "claude-haiku-4-5";
 
 const supabase = serviceRoleClient();
 const conversationIds: string[] = [];
+const testUserIds: string[] = [];
+
+// Every caller now signs in for real (Task 13/14) - caller_ref is a real
+// auth.users.id, verified via a real Supabase access token, not an
+// arbitrary string. A fresh account per "visitor" the tests need to tell
+// apart, cleaned up afterward.
+async function newCallerToken(): Promise<string> {
+  const email = `agent-server-test-${crypto.randomUUID()}@relaypay-test.example`;
+  const password = "Test-caller-pass-1!";
+  const { data: created, error: createError } = await supabase.auth.admin.createUser({ email, password, email_confirm: true });
+  if (createError) throw createError;
+  testUserIds.push(created.user.id);
+
+  const { data: signedIn, error: signInError } = await anonClient().auth.signInWithPassword({ email, password });
+  if (signInError) throw signInError;
+  return signedIn.session!.access_token;
+}
 
 function textDelta(text: string): SDKMessage {
   return { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } } as unknown as SDKMessage;
@@ -52,7 +68,7 @@ beforeAll(async () => {
     maxConcurrent: 3,
     queryFactory: scriptedQueryFactory([textDelta("Fees "), textDelta("depend on the corridor."), resultMessage()]),
   });
-  const app = createApp({ supabase, sessionManager, conversationTokenSecret: CONVERSATION_TOKEN_SECRET, visitorHashSalt: VISITOR_HASH_SALT, vapiServerSecret: VAPI_SERVER_SECRET, model: MODEL, maxConcurrentSessions: 3 });
+  const app = createApp({ supabase, sessionManager, conversationTokenSecret: CONVERSATION_TOKEN_SECRET, vapiServerSecret: VAPI_SERVER_SECRET, model: MODEL, maxConcurrentSessions: 3 });
   server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -67,40 +83,59 @@ afterEach(async () => {
     sessionManager.close(id);
     await supabase.from("conversations").delete().eq("id", id);
   }
+  for (const id of testUserIds.splice(0)) {
+    await supabase.auth.admin.deleteUser(id).catch(() => undefined);
+  }
 });
 
-async function createConversation(browserId: string, channel: "web_voice" | "web_text" = "web_voice"): Promise<{ status: number; body: Record<string, unknown> }> {
-  const res = await fetch(`${baseUrl}/api/conversations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ browser_id: browserId, channel }) });
+async function createConversation(accessToken: string, channel: "web_voice" | "web_text" = "web_voice"): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await fetch(`${baseUrl}/api/conversations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ access_token: accessToken, channel }) });
   const body = (await res.json()) as Record<string, unknown>;
   if (typeof body.conversation_id === "string") conversationIds.push(body.conversation_id);
   return { status: res.status, body };
 }
 
 describe("GET /api/limits", () => {
-  it("reports 0 used for a browser_id with no calls today", async () => {
-    const res = await fetch(`${baseUrl}/api/limits?browser_id=${crypto.randomUUID()}`);
+  it("rejects a request with no access token", async () => {
+    const res = await fetch(`${baseUrl}/api/limits`);
+    expect(res.status).toBe(401);
+  });
+
+  it("reports 0 used for an account with no calls today", async () => {
+    const token = await newCallerToken();
+    const res = await fetch(`${baseUrl}/api/limits?access_token=${token}`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ used: 0, limit: 3 });
   });
 
-  it("reflects real calls made against the same browser_id", async () => {
-    const browserId = crypto.randomUUID();
-    await createConversation(browserId);
-    await createConversation(browserId);
-    const res = await fetch(`${baseUrl}/api/limits?browser_id=${browserId}`);
+  it("reflects real calls made against the same account", async () => {
+    const token = await newCallerToken();
+    await createConversation(token);
+    await createConversation(token);
+    const res = await fetch(`${baseUrl}/api/limits?access_token=${token}`);
     expect(await res.json()).toEqual({ used: 2, limit: 3 });
   });
 
-  it("doesn't count a different browser_id's calls", async () => {
-    await createConversation(crypto.randomUUID());
-    const res = await fetch(`${baseUrl}/api/limits?browser_id=${crypto.randomUUID()}`);
+  it("doesn't count a different account's calls", async () => {
+    await createConversation(await newCallerToken());
+    const res = await fetch(`${baseUrl}/api/limits?access_token=${await newCallerToken()}`);
     expect(await res.json()).toEqual({ used: 0, limit: 3 });
   });
 });
 
 describe("POST /api/conversations", () => {
+  it("rejects a request with no access token", async () => {
+    const res = await fetch(`${baseUrl}/api/conversations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: "web_voice" }) });
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects a request with an invalid access token", async () => {
+    const res = await fetch(`${baseUrl}/api/conversations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: "web_voice", access_token: "not-a-real-token" }) });
+    expect(res.status).toBe(401);
+  });
+
   it("creates a conversation and returns a token that verifies for it", async () => {
-    const { status, body } = await createConversation(crypto.randomUUID());
+    const { status, body } = await createConversation(await newCallerToken());
     expect(status).toBe(200);
     expect(typeof body.conversation_id).toBe("string");
     expect(typeof body.token).toBe("string");
@@ -110,13 +145,13 @@ describe("POST /api/conversations", () => {
   it(
     "refuses a visitor's 4th call today with 429 daily_limit_reached",
     async () => {
-      const browserId = crypto.randomUUID();
+      const token = await newCallerToken();
       for (let i = 0; i < 3; i++) {
-        const { status, body } = await createConversation(browserId);
+        const { status, body } = await createConversation(token);
         expect(status).toBe(200);
         sessionManager.close(body.conversation_id as string); // free the session slot without affecting the daily count
       }
-      const fourth = await createConversation(browserId);
+      const fourth = await createConversation(token);
       expect(fourth.status).toBe(429);
       expect(fourth.body).toEqual({ error: "daily_limit_reached" });
     },
@@ -127,10 +162,10 @@ describe("POST /api/conversations", () => {
     "refuses a 4th concurrent session with 503, distinct visitors, under the daily limit",
     async () => {
       for (let i = 0; i < 3; i++) {
-        const { status } = await createConversation(crypto.randomUUID());
+        const { status } = await createConversation(await newCallerToken());
         expect(status).toBe(200);
       }
-      const fourth = await createConversation(crypto.randomUUID());
+      const fourth = await createConversation(await newCallerToken());
       expect(fourth.status).toBe(503);
       expect(fourth.body).toEqual({ error: "all agents are busy, please try again shortly" });
     },
@@ -149,7 +184,7 @@ describe("POST /vapi/chat/completions", () => {
   });
 
   it("rejects a request with an invalid or expired token", async () => {
-    const { body } = await createConversation(crypto.randomUUID());
+    const { body } = await createConversation(await newCallerToken());
     const res = await fetch(`${baseUrl}/vapi/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-vapi-server-secret": VAPI_SERVER_SECRET },
@@ -161,7 +196,7 @@ describe("POST /vapi/chat/completions", () => {
   it(
     "streams an OpenAI-shaped chat.completion.chunk SSE reply and records the turn",
     async () => {
-      const { body } = await createConversation(crypto.randomUUID());
+      const { body } = await createConversation(await newCallerToken());
       const res = await fetch(`${baseUrl}/vapi/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-vapi-server-secret": VAPI_SERVER_SECRET },
@@ -185,7 +220,7 @@ describe("POST /api/text", () => {
   it(
     "streams a plain SSE reply for a text-channel turn",
     async () => {
-      const { body } = await createConversation(crypto.randomUUID(), "web_text");
+      const { body } = await createConversation(await newCallerToken(), "web_text");
       const res = await fetch(`${baseUrl}/api/text`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -207,7 +242,7 @@ describe("POST /api/text", () => {
 
 describe("POST /api/text/end", () => {
   it("closes the conversation and frees its session slot for the concurrency cap", async () => {
-    const { body } = await createConversation(crypto.randomUUID(), "web_text");
+    const { body } = await createConversation(await newCallerToken(), "web_text");
     expect(sessionManager.has(body.conversation_id as string)).toBe(true);
 
     const res = await fetch(`${baseUrl}/api/text/end`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: body.conversation_id, token: body.token }) });
@@ -234,7 +269,7 @@ describe("POST /vapi/events", () => {
   it(
     "end-of-call-report closes the conversation, idempotently",
     async () => {
-      const { body } = await createConversation(crypto.randomUUID());
+      const { body } = await createConversation(await newCallerToken());
       const payload = { message: { type: "end-of-call-report", endedReason: "customer-ended-call", call: { id: "vapi-call-1", metadata: { conversation_id: body.conversation_id } } } };
       const first = await fetch(`${baseUrl}/vapi/events`, { method: "POST", headers: { "Content-Type": "application/json", "x-vapi-server-secret": VAPI_SERVER_SECRET }, body: JSON.stringify(payload) });
       expect(first.status).toBe(200);

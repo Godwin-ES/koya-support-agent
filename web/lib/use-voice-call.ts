@@ -36,24 +36,8 @@ export interface EndOfCallSummary {
 export const MAX_CALL_SECONDS = 300;
 const SILENCE_TIMEOUT_MS = 30_000;
 
-const BROWSER_ID_STORAGE_KEY = "relaypay_browser_id";
-
-function getOrCreateBrowserId(): string {
-  try {
-    const existing = localStorage.getItem(BROWSER_ID_STORAGE_KEY);
-    if (existing) return existing;
-    const id = crypto.randomUUID();
-    localStorage.setItem(BROWSER_ID_STORAGE_KEY, id);
-    return id;
-  } catch {
-    // Storage blocked (private window, disabled cookies/storage) - a
-    // fresh id every call still works, it just won't help the daily
-    // limit tell this visitor apart from a new tab on a shared IP.
-    return crypto.randomUUID();
-  }
-}
-
-export function useVoiceCall() {
+/** `accessToken` is the signed-in caller's Supabase session token (from `page.tsx`'s server-side session check) - agent-server verifies it (`supabase.auth.getUser(token)`) to derive `caller_ref` for the daily limit, replacing the old IP+browser-id hash now that every caller has a real account. */
+export function useVoiceCall(accessToken: string) {
   const [callState, setCallState] = useState<CallState>("idle");
   const [callerText, setCallerText] = useState("");
   const [agentText, setAgentText] = useState("");
@@ -133,7 +117,7 @@ export function useVoiceCall() {
       res = await fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/conversations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: "web_voice", browser_id: getOrCreateBrowserId() }),
+        body: JSON.stringify({ channel: "web_voice", access_token: accessToken }),
       });
     } catch {
       setCallState("unavailable");
@@ -162,7 +146,7 @@ export function useVoiceCall() {
     } catch {
       setCallState("unavailable");
     }
-  }, [getVapi]);
+  }, [getVapi, accessToken]);
 
   const endCall = useCallback(() => {
     setCallState("ending");

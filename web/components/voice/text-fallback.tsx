@@ -5,8 +5,8 @@ import { deriveTextActions } from "@core/domain/text-actions";
 import { useTextChat } from "@/lib/use-text-chat";
 import { ActionButton } from "@/components/primitives/action-button";
 
-export function TextFallback({ onSwitchToVoice }: { onSwitchToVoice: () => void }) {
-  const { turns, isStreaming, isEnded, hasSentAMessage, sendMessage, endConversation } = useTextChat();
+export function TextFallback({ accessToken, onSwitchToVoice }: { accessToken: string; onSwitchToVoice: () => void }) {
+  const { turns, isStreaming, isEnded, hasSentAMessage, sendMessage, endConversation } = useTextChat(accessToken);
   const [draft, setDraft] = useState("");
 
   const actions = deriveTextActions({ draftIsEmpty: draft.trim().length === 0, isStreaming, hasSentAMessage });

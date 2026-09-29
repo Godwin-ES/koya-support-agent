@@ -11,12 +11,11 @@ import { SessionManager } from "./session-manager";
 
 const PORT = Number(process.env.AGENT_SERVER_PORT ?? 8091);
 const CONVERSATION_TOKEN_SECRET = process.env.CONVERSATION_TOKEN_SECRET;
-const VISITOR_HASH_SALT = process.env.VISITOR_HASH_SALT;
 const MCP_SERVER_URL = process.env.MCP_SERVER_URL;
 const MCP_SERVER_TOKEN = process.env.MCP_SERVER_TOKEN;
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-haiku-4-5";
 
-for (const [name, value] of Object.entries({ CONVERSATION_TOKEN_SECRET, VISITOR_HASH_SALT, MCP_SERVER_URL, MCP_SERVER_TOKEN })) {
+for (const [name, value] of Object.entries({ CONVERSATION_TOKEN_SECRET, MCP_SERVER_URL, MCP_SERVER_TOKEN })) {
   if (!value) throw new Error(`${name} is not set (see .env.example).`);
 }
 
@@ -36,7 +35,6 @@ const app = createApp({
   supabase,
   sessionManager,
   conversationTokenSecret: CONVERSATION_TOKEN_SECRET!,
-  visitorHashSalt: VISITOR_HASH_SALT!,
   vapiServerSecret: process.env.VAPI_SERVER_SECRET,
   model: MODEL,
 });

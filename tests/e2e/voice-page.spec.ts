@@ -2,9 +2,43 @@
 // axe - against the real Next.js app, with Vapi stubbed
 // (window.__VAPI_STUB__, web/lib/use-voice-call.ts's own test seam) and
 // POST /api/conversations intercepted, since a real call needs a
-// microphone and a real backend neither CI nor this test wants. $0.
+// microphone and a real backend neither CI nor this test wants. $0. The
+// voice page moved behind real auth (Task 13/14 - "no account, no call"),
+// so every test signs in first, against the real Supabase project, the
+// same pattern console.spec.ts already uses for staff sign-in.
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { createClient } from "@supabase/supabase-js";
+import { config as loadEnv } from "dotenv";
+import path from "node:path";
+
+loadEnv({ path: path.resolve(import.meta.dirname, "../../.env.local"), quiet: true });
+
+const CALLER_EMAIL = "e2e-voice-test@relaypay-test.example";
+const CALLER_PASSWORD = "Test-voice-e2e-pass-1!";
+
+const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { autoRefreshToken: false, persistSession: false } });
+
+test.beforeAll(async () => {
+  // fullyParallel runs this once per worker, and every worker races to
+  // create the same fixed test account - a losing worker can get a raw
+  // "Database error creating new user" instead of the friendlier "already
+  // registered" message (an unserialized duplicate-key race, not a real
+  // failure), so the real check is simply: does the account exist now,
+  // whoever created it.
+  const { error } = await admin.auth.admin.createUser({ email: CALLER_EMAIL, password: CALLER_PASSWORD, email_confirm: true, user_metadata: { name: "E2E Voice Test" } });
+  if (!error) return;
+  const { data } = await admin.auth.admin.listUsers();
+  if (!data.users.some((u) => u.email === CALLER_EMAIL)) throw error;
+});
+
+async function signInAndGoHome(page: Page) {
+  await page.goto("/sign-in");
+  await page.getByLabel("Email").fill(CALLER_EMAIL);
+  await page.getByLabel("Password").fill(CALLER_PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForURL((url) => url.pathname === "/");
+}
 
 const STUB_INIT_SCRIPT = `
   (function () {
@@ -49,7 +83,7 @@ test("assertion 1: double-clicking Start call creates exactly one conversation, 
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ conversation_id: "conv-1", token: "tok-1" }) });
   });
 
-  await page.goto("/");
+  await signInAndGoHome(page);
   // A stable id, not the visible label - the label itself changes
   // ("Start call" -> "Connecting…") the moment the click's own async work
   // starts, which a label-based locator would stop matching mid-test.
@@ -68,7 +102,7 @@ test("assertion 1: double-clicking Start call creates exactly one conversation, 
 
 test("assertion 2: every call-matrix state shows exactly its enabled/disabled/hidden controls, each disabled control exposing its reason", async ({ page }) => {
   await interceptConversations(page, 429, { error: "daily_limit_reached" });
-  await page.goto("/");
+  await signInAndGoHome(page);
 
   await page.getByRole("button", { name: "Start call" }).click();
 
@@ -91,7 +125,7 @@ test("assertion 3: the text fallback sends exactly once on Enter, and Send stays
     });
   });
 
-  await page.goto("/");
+  await signInAndGoHome(page);
   await page.getByRole("button", { name: "Type instead" }).click();
 
   const textbox = page.getByLabel("Type a message");
@@ -104,7 +138,7 @@ test("assertion 3: the text fallback sends exactly once on Enter, and Send stays
 
 test("assertion 4: mic-blocked, limit-reached, busy and unavailable each render their message and one way forward", async ({ page }) => {
   await interceptConversations(page, 503, { error: "all agents are busy, please try again shortly" });
-  await page.goto("/");
+  await signInAndGoHome(page);
   await page.getByRole("button", { name: "Start call" }).click();
 
   await expect(page.getByText(/all our agents are busy/i)).toBeVisible();
@@ -113,7 +147,7 @@ test("assertion 4: mic-blocked, limit-reached, busy and unavailable each render 
 
 test("keyboard: Start call and End call are reachable and activate with Enter", async ({ page }) => {
   await interceptConversations(page, 200, { conversation_id: "conv-1", token: "tok-1" });
-  await page.goto("/");
+  await signInAndGoHome(page);
 
   await page.keyboard.press("Tab"); // wordmark/logo isn't focusable - lands on the first real control
   const startButton = page.getByRole("button", { name: "Start call" });
@@ -126,14 +160,14 @@ test("keyboard: Start call and End call are reachable and activate with Enter", 
 
 test("axe: the voice page has no automatically detectable accessibility violations", async ({ page }) => {
   await interceptConversations(page, 200, { conversation_id: "conv-1", token: "tok-1" });
-  await page.goto("/");
+  await signInAndGoHome(page);
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
 });
 
 test("phone layout (Task 14 audit): the voice page works at a phone viewport, no horizontal scroll", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 667 }); // iPhone SE-class width, the narrowest common target (SYSTEM-DESIGN.md §11.10: "the voice page works fully on phones")
-  await page.goto("/");
+  await signInAndGoHome(page);
 
   const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(scrollWidth).toBeLessThanOrEqual(375);

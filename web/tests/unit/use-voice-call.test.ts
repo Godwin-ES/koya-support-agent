@@ -42,7 +42,7 @@ describe("useVoiceCall - timers", () => {
   });
 
   it("counts down from 5 minutes once the call connects", async () => {
-    const { result } = renderHook(() => useVoiceCall());
+    const { result } = renderHook(() => useVoiceCall("test-access-token"));
     await act(async () => {
       await result.current.startCall();
     });
@@ -56,7 +56,7 @@ describe("useVoiceCall - timers", () => {
   });
 
   it("ends the call itself after 30s of caller silence, and says so in the summary", async () => {
-    const { result } = renderHook(() => useVoiceCall());
+    const { result } = renderHook(() => useVoiceCall("test-access-token"));
     await act(async () => {
       await result.current.startCall();
     });
@@ -71,7 +71,7 @@ describe("useVoiceCall - timers", () => {
   });
 
   it("does not time out while the agent is mid-reply (activity keeps resetting the clock)", async () => {
-    const { result } = renderHook(() => useVoiceCall());
+    const { result } = renderHook(() => useVoiceCall("test-access-token"));
     await act(async () => {
       await result.current.startCall();
     });
@@ -89,7 +89,7 @@ describe("useVoiceCall - timers", () => {
   });
 
   it("a normal hang-up does not report itself as a silence timeout", async () => {
-    const { result } = renderHook(() => useVoiceCall());
+    const { result } = renderHook(() => useVoiceCall("test-access-token"));
     await act(async () => {
       await result.current.startCall();
     });

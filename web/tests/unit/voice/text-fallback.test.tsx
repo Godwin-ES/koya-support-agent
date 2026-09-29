@@ -31,7 +31,7 @@ describe("TextFallback", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ conversation_id: "c1", token: "t1" }), { status: 200 }))
       .mockResolvedValueOnce(streamResponse([sseChunk("Fees "), sseChunk("depend on the corridor.")]));
 
-    render(<TextFallback onSwitchToVoice={() => {}} />);
+    render(<TextFallback accessToken="test-access-token" onSwitchToVoice={() => {}} />);
     const textbox = screen.getByLabelText("Type a message");
     await user.type(textbox, "What are your fees?");
     await user.type(textbox, "{Enter}");
@@ -46,7 +46,7 @@ describe("TextFallback", () => {
   it("Shift+Enter adds a new line instead of sending", async () => {
     const user = userEvent.setup();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    render(<TextFallback onSwitchToVoice={() => {}} />);
+    render(<TextFallback accessToken="test-access-token" onSwitchToVoice={() => {}} />);
     const textbox = screen.getByLabelText("Type a message");
     await user.type(textbox, "line one{Shift>}{Enter}{/Shift}line two");
 
@@ -60,7 +60,7 @@ describe("TextFallback", () => {
     const deferredStream = new Promise<Response>(() => {}); // never resolves within this test
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ conversation_id: "c1", token: "t1" }), { status: 200 })).mockReturnValueOnce(deferredStream);
 
-    render(<TextFallback onSwitchToVoice={() => {}} />);
+    render(<TextFallback accessToken="test-access-token" onSwitchToVoice={() => {}} />);
     const textbox = screen.getByLabelText("Type a message");
     await user.type(textbox, "Hello");
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -70,12 +70,12 @@ describe("TextFallback", () => {
   });
 
   it("Send is disabled with 'Type a message' while the box is empty", () => {
-    render(<TextFallback onSwitchToVoice={() => {}} />);
+    render(<TextFallback accessToken="test-access-token" onSwitchToVoice={() => {}} />);
     expect(screen.getByRole("button", { name: "Send" })).toHaveAccessibleDescription("Type a message");
   });
 
   it("End conversation is disabled until a message has been sent", () => {
-    render(<TextFallback onSwitchToVoice={() => {}} />);
+    render(<TextFallback accessToken="test-access-token" onSwitchToVoice={() => {}} />);
     expect(screen.getByRole("button", { name: "End conversation" })).toBeDisabled();
   });
 
@@ -86,7 +86,7 @@ describe("TextFallback", () => {
       .mockResolvedValueOnce(streamResponse([sseChunk("Fees vary.")]))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ended: true }), { status: 200 }));
 
-    render(<TextFallback onSwitchToVoice={() => {}} />);
+    render(<TextFallback accessToken="test-access-token" onSwitchToVoice={() => {}} />);
     const textbox = screen.getByLabelText("Type a message");
     await user.type(textbox, "What are your fees?{Enter}");
     await waitFor(() => expect(screen.getByText(/fees vary/i)).toBeInTheDocument());

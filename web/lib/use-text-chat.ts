@@ -7,22 +7,8 @@ export interface TextTurn {
   text: string;
 }
 
-const BROWSER_ID_STORAGE_KEY = "relaypay_browser_id";
-
-function getOrCreateBrowserId(): string {
-  try {
-    const existing = localStorage.getItem(BROWSER_ID_STORAGE_KEY);
-    if (existing) return existing;
-    const id = crypto.randomUUID();
-    localStorage.setItem(BROWSER_ID_STORAGE_KEY, id);
-    return id;
-  } catch {
-    return crypto.randomUUID();
-  }
-}
-
-/** The text fallback (SYSTEM-DESIGN.md §11.7, §3: "the same session code, streaming to the browser instead of Vapi, channel = web_text"). */
-export function useTextChat() {
+/** The text fallback (SYSTEM-DESIGN.md §11.7, §3: "the same session code, streaming to the browser instead of Vapi, channel = web_text"). `accessToken` is the signed-in caller's Supabase session token - see use-voice-call.ts's own note on why this replaced browser-id hashing. */
+export function useTextChat(accessToken: string) {
   const [turns, setTurns] = useState<TextTurn[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isEnded, setIsEnded] = useState(false);
@@ -33,13 +19,13 @@ export function useTextChat() {
     const res = await fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/conversations`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channel: "web_text", browser_id: getOrCreateBrowserId() }),
+      body: JSON.stringify({ channel: "web_text", access_token: accessToken }),
     });
     if (!res.ok) throw new Error(`POST /api/conversations failed: ${res.status}`);
     const conversation = (await res.json()) as { conversation_id: string; token: string };
     conversationRef.current = { id: conversation.conversation_id, token: conversation.token };
     return conversationRef.current;
-  }, []);
+  }, [accessToken]);
 
   const sendMessage = useCallback(
     async (message: string) => {

@@ -17,7 +17,7 @@ APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # our own backend processes, nothing browser-facing) keeps this script
 # simple and matches env_file: .env being used by both services in
 # docker-compose.yml.
-NAMES=(NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY ANTHROPIC_API_KEY ANTHROPIC_MODEL MCP_SERVER_TOKEN CONVERSATION_TOKEN_SECRET VISITOR_HASH_SALT VAPI_SERVER_SECRET)
+NAMES=(NEXT_PUBLIC_SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY ANTHROPIC_API_KEY ANTHROPIC_MODEL MCP_SERVER_TOKEN CONVERSATION_TOKEN_SECRET VAPI_SERVER_SECRET)
 
 env_file="$(mktemp)"
 trap 'rm -f "$env_file"' EXIT

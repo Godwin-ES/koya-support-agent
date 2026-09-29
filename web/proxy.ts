@@ -2,10 +2,13 @@ import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
 /**
- * "`/console` behind Supabase Auth, staff only" (SYSTEM-DESIGN.md §11.1) -
- * also refreshes the session cookie on every request (@supabase/ssr's own
- * documented split with the Server Component client, which can't write
- * cookies during a render). Named `proxy`, not `middleware` - Next.js 16
+ * Two gates behind the same Supabase Auth session check: `/console`
+ * (staff, SYSTEM-DESIGN.md §11.1) and, since Task 13/14's auth work, the
+ * public voice page itself (`/`) - "no account, no call" was a deliberate
+ * decision to move off the original fully-anonymous design. Also refreshes
+ * the session cookie on every request (@supabase/ssr's own documented
+ * split with the Server Component client, which can't write cookies
+ * during a render). Named `proxy`, not `middleware` - Next.js 16
  * deprecated and renamed the file convention (confirmed against this
  * project's own installed docs, `node_modules/next/dist/docs/.../proxy.md`
  * - a real build warning caught this, not something assumed from memory).
@@ -29,8 +32,12 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
-  const isConsoleRoute = pathname.startsWith("/console") && pathname !== "/console/sign-in";
 
+  // The invite-completion flow arrives with no session cookie yet - that's
+  // exactly what it establishes, so it can't be behind this same gate.
+  if (pathname.startsWith("/console/auth/")) return response;
+
+  const isConsoleRoute = pathname.startsWith("/console") && pathname !== "/console/sign-in";
   if (isConsoleRoute && !user) {
     const signInUrl = request.nextUrl.clone();
     signInUrl.pathname = "/console/sign-in";
@@ -42,9 +49,21 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(consoleUrl);
   }
 
+  const isPublicAuthRoute = pathname === "/sign-in" || pathname === "/sign-up";
+  if (pathname === "/" && !user) {
+    const signInUrl = request.nextUrl.clone();
+    signInUrl.pathname = "/sign-in";
+    return NextResponse.redirect(signInUrl);
+  }
+  if (isPublicAuthRoute && user) {
+    const homeUrl = request.nextUrl.clone();
+    homeUrl.pathname = "/";
+    return NextResponse.redirect(homeUrl);
+  }
+
   return response;
 }
 
 export const config = {
-  matcher: ["/console/:path*"],
+  matcher: ["/console/:path*", "/", "/sign-in", "/sign-up"],
 };

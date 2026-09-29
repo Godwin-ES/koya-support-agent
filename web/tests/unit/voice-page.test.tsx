@@ -1,7 +1,12 @@
 // Component tests per call state (IMPLEMENTATION-PLAN.md Task 10) - the
-// voice page rendered under every SYSTEM-DESIGN.md §11.5 state, asserting
-// exactly the controls deriveCallActions specifies for it. `useVoiceCall`
-// is mocked so each state is driven directly, not through a real Vapi call.
+// voice page's client component (VoicePageClient) rendered under every
+// SYSTEM-DESIGN.md §11.5 state, asserting exactly the controls
+// deriveCallActions specifies for it. `useVoiceCall` is mocked so each
+// state is driven directly, not through a real Vapi call. Renders
+// VoicePageClient directly, not web/app/page.tsx - that's now an async
+// Server Component (it checks the session and hands down the access
+// token), which React Testing Library/jsdom can't render; the session
+// gate itself belongs in an e2e/integration test, not here.
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { CallState } from "@core/domain/call-actions";
@@ -25,8 +30,8 @@ interface HookValue {
 
 async function renderAtState(callState: CallState, overrides: Partial<HookValue> = {}) {
   mockUseVoiceCall.mockReturnValue({ ...baseHookValue(callState), ...overrides });
-  const { default: VoicePage } = await import("@/app/page");
-  return render(<VoicePage />);
+  const { VoicePageClient } = await import("@/components/voice/voice-page-client");
+  return render(<VoicePageClient accessToken="test-access-token" onSignOut={async () => {}} />);
 }
 
 function baseHookValue(callState: CallState): HookValue {
