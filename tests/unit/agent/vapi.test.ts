@@ -2,18 +2,26 @@ import { describe, expect, it } from "vitest";
 import { formatChatCompletionChunk, newUserMessage, parseChatCompletionsBody, parseVapiEventBody, SSE_DONE } from "@core/agent/vapi";
 
 describe("parseChatCompletionsBody", () => {
-  it("parses a real Vapi custom-llm request shape", () => {
+  it("parses a real Vapi custom-llm request shape (call.assistantOverrides.metadata - verified against a real live call, Task 13)", () => {
     const body = {
       model: "claude-haiku-4-5",
       messages: [
         { role: "system", content: "You are..." },
         { role: "user", content: "What are your fees?" },
       ],
-      metadata: { conversation_id: "conv-1", token: "tok-1" },
+      call: { assistantOverrides: { metadata: { conversation_id: "conv-1", token: "tok-1" } } },
       stream: true,
     };
     const parsed = parseChatCompletionsBody(body);
     expect(parsed).toEqual({ conversationId: "conv-1", token: "tok-1", model: "claude-haiku-4-5", effort: undefined, userMessages: ["What are your fees?"] });
+  });
+
+  it("falls back to a top-level metadata field (not what a real Vapi call sends, but kept for a direct/test caller)", () => {
+    const body = {
+      messages: [{ role: "user", content: "hi" }],
+      metadata: { conversation_id: "conv-1", token: "tok-1" },
+    };
+    expect(parseChatCompletionsBody(body)).toMatchObject({ conversationId: "conv-1", token: "tok-1" });
   });
 
   it("collects every user message across a longer history, in order", () => {
@@ -72,12 +80,12 @@ describe("formatChatCompletionChunk / SSE_DONE", () => {
 });
 
 describe("parseVapiEventBody", () => {
-  it("parses a real end-of-call-report payload (docs.vapi.ai/server-url/events)", () => {
+  it("parses a real end-of-call-report payload (call.assistantOverrides.metadata - verified against a real live call, Task 13)", () => {
     const body = {
       message: {
         type: "end-of-call-report",
         endedReason: "customer-ended-call",
-        call: { id: "vapi-call-1", metadata: { conversation_id: "conv-1" }, analysis: { summary: "Caller asked about fees." } },
+        call: { id: "vapi-call-1", assistantOverrides: { metadata: { conversation_id: "conv-1" } }, analysis: { summary: "Caller asked about fees." } },
         artifact: { transcript: "AI: Hi. User: What are your fees?" },
       },
     };
@@ -91,18 +99,23 @@ describe("parseVapiEventBody", () => {
     });
   });
 
+  it("falls back to call.metadata (not what a real Vapi call sends, but kept for resilience)", () => {
+    const body = { message: { type: "hang", call: { id: "c1", metadata: { conversation_id: "conv-1" } } } };
+    expect(parseVapiEventBody(body)).toMatchObject({ conversationId: "conv-1" });
+  });
+
   it("falls back to a null summary when analysis hasn't been generated yet", () => {
-    const body = { message: { type: "end-of-call-report", endedReason: "hangup", call: { id: "c1", metadata: { conversation_id: "conv-1" } } } };
+    const body = { message: { type: "end-of-call-report", endedReason: "hangup", call: { id: "c1", assistantOverrides: { metadata: { conversation_id: "conv-1" } } } } };
     expect(parseVapiEventBody(body)).toMatchObject({ type: "end-of-call-report", summary: null });
   });
 
   it("parses a status-update payload", () => {
-    const body = { message: { type: "status-update", call: { id: "vapi-call-1", metadata: { conversation_id: "conv-1" } }, status: "in-progress" } };
+    const body = { message: { type: "status-update", call: { id: "vapi-call-1", assistantOverrides: { metadata: { conversation_id: "conv-1" } } }, status: "in-progress" } };
     expect(parseVapiEventBody(body)).toEqual({ type: "status-update", callId: "vapi-call-1", conversationId: "conv-1", status: "in-progress" });
   });
 
   it("parses a hang payload", () => {
-    const body = { message: { type: "hang", call: { id: "vapi-call-1", metadata: { conversation_id: "conv-1" } } } };
+    const body = { message: { type: "hang", call: { id: "vapi-call-1", assistantOverrides: { metadata: { conversation_id: "conv-1" } } } } };
     expect(parseVapiEventBody(body)).toEqual({ type: "hang", callId: "vapi-call-1", conversationId: "conv-1" });
   });
 

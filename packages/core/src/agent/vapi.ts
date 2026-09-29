@@ -11,21 +11,38 @@ export interface ParsedChatCompletionsRequest {
   userMessages: string[];
 }
 
+interface VapiCallMetadata {
+  conversation_id?: string;
+  token?: string;
+  model?: string;
+  effort?: "low" | "high";
+}
+
 interface VapiChatCompletionsBody {
   model?: string;
   messages?: Array<{ role: string; content: string }>;
-  metadata?: { conversation_id?: string; token?: string; model?: string; effort?: "low" | "high" };
+  // `metadataSendMode: "variable"` sends the *assistant's* static metadata
+  // here (docs.vapi.ai's own field description: "will send `assistant.metadata`
+  // as a variable"), never the per-call one - our per-call conversation_id/
+  // token live under `call.assistantOverrides.metadata` instead (confirmed
+  // against a real live call's own GET /call response, Task 13). Checked
+  // first since it's the real, documented location; `metadata` at the top
+  // level is kept as a fallback for callers (tests, a future non-Vapi
+  // client) that pass it directly there.
+  metadata?: VapiCallMetadata;
+  call?: { assistantOverrides?: { metadata?: VapiCallMetadata } };
 }
 
 export function parseChatCompletionsBody(body: unknown): ParsedChatCompletionsRequest | null {
   if (!body || typeof body !== "object") return null;
   const b = body as VapiChatCompletionsBody;
-  const conversationId = b.metadata?.conversation_id;
-  const token = b.metadata?.token;
+  const metadata = b.call?.assistantOverrides?.metadata ?? b.metadata;
+  const conversationId = metadata?.conversation_id;
+  const token = metadata?.token;
   if (!conversationId || !token) return null;
 
   const userMessages = (b.messages ?? []).filter((m) => m.role === "user").map((m) => m.content);
-  return { conversationId, token, model: b.metadata?.model ?? b.model, effort: b.metadata?.effort, userMessages };
+  return { conversationId, token, model: metadata?.model ?? b.model, effort: metadata?.effort, userMessages };
 }
 
 /** Which user message (if any) is new, given how many turns are already recorded - "stays idempotent for a repeated turn" (Task 7). */
@@ -49,14 +66,22 @@ export const SSE_DONE = "data: [DONE]\n\n";
 // -- /vapi/events (server-message webhooks) --------------------------------
 // Confirmed against Vapi's docs (docs.vapi.ai/server-url/events), not
 // assumed: every server-message is nested under a `message` key, `type`
-// discriminates it, and the call is identified by a `call` object (`call.id`,
-// `call.metadata`) - confirmed against the Calls API reference
-// (docs.vapi.ai/api-reference/calls/get) for the Call object's own fields
-// (`id`, `metadata`, `endedReason`, `cost`, `analysis.summary`).
+// discriminates it, and the call is identified by a `call` object (`call.id`)
+// - confirmed against the Calls API reference (docs.vapi.ai/api-reference/
+// calls/get) for the Call object's own fields (`id`, `endedReason`, `cost`,
+// `analysis.summary`).
+//
+// Our per-call conversation_id lives at `call.assistantOverrides.metadata`,
+// not `call.metadata` - verified against a real live call's own GET /call
+// response (Task 13): the earlier `call.metadata` assumption was untested
+// against a real call and was wrong (it read back empty in production,
+// which would have silently orphaned every real voice conversation - never
+// marked ended, no cost recorded). `call.metadata` is kept as a fallback.
 
 interface VapiCall {
   id?: string;
   metadata?: { conversation_id?: string };
+  assistantOverrides?: { metadata?: { conversation_id?: string } };
   analysis?: { summary?: string };
 }
 
@@ -73,7 +98,7 @@ export function parseVapiEventBody(body: unknown): ParsedVapiEvent {
   const m = message as { type: string; call?: VapiCall; endedReason?: string; status?: string; artifact?: { transcript?: string } };
   const call = m.call;
   const callId = call?.id ?? null;
-  const conversationId = call?.metadata?.conversation_id ?? null;
+  const conversationId = call?.assistantOverrides?.metadata?.conversation_id ?? call?.metadata?.conversation_id ?? null;
 
   if (m.type === "end-of-call-report") {
     return { type: "end-of-call-report", callId, conversationId, endedReason: m.endedReason ?? "unknown", summary: call?.analysis?.summary ?? null, transcript: m.artifact?.transcript ?? null };
