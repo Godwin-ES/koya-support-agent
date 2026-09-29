@@ -16,8 +16,15 @@ const STAFF_PASSWORD = "Test-console-e2e-pass-1!";
 const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { autoRefreshToken: false, persistSession: false } });
 
 test.beforeAll(async () => {
-  const { error } = await admin.auth.admin.createUser({ email: STAFF_EMAIL, password: STAFF_PASSWORD, email_confirm: true });
-  if (error && !error.message.includes("already been registered")) throw error;
+  const { data, error } = await admin.auth.admin.createUser({ email: STAFF_EMAIL, password: STAFF_PASSWORD, email_confirm: true, app_metadata: { is_staff: true } });
+  if (!error) return;
+  // Already exists (a prior run, or a parallel worker's own beforeAll racing this one) - fine, but
+  // make sure it's still marked staff (an account from before web/lib/auth.ts's isStaff() check
+  // existed wouldn't be, and every console test needs a real staff session to get anywhere).
+  const { data: existing } = await admin.auth.admin.listUsers();
+  const user = existing.users.find((u) => u.email === STAFF_EMAIL);
+  if (!user) throw error;
+  await admin.auth.admin.updateUserById(user.id, { app_metadata: { is_staff: true } });
 });
 
 async function signIn(page: import("@playwright/test").Page) {

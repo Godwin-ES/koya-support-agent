@@ -1,7 +1,12 @@
 /**
  * Creates a console staff account (SYSTEM-DESIGN.md §11.1: "no self
- * sign-up" - accounts are created out of band, here). Prints no secret
- * values.
+ * sign-up" - accounts are created out of band, here). Sets
+ * app_metadata.is_staff so this account (and only this account, not a
+ * public /sign-up one) can reach /console - web/lib/auth.ts's isStaff()
+ * check, `app_metadata` deliberately, not `user_metadata`, since only
+ * this admin API can write it (a signed-in user can edit their own
+ * user_metadata, which would make that field self-grantable). Prints no
+ * secret values.
  *
  *   STAFF_EMAIL=you@relaypay.example STAFF_PASSWORD=... node scripts/create-staff-user.mjs
  */
@@ -20,7 +25,7 @@ if (!email || !password) {
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
 
-const { data, error } = await supabase.auth.admin.createUser({ email, password, email_confirm: true });
+const { data, error } = await supabase.auth.admin.createUser({ email, password, email_confirm: true, app_metadata: { is_staff: true } });
 if (error) {
   console.error(`Failed to create staff user: ${error.message}`);
   process.exit(1);

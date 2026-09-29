@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { supabaseServerClient } from "@/lib/supabase/server";
+import { isStaff } from "@/lib/auth";
 import { Wordmark } from "@/components/brand/wordmark";
 import { signOut } from "./actions";
 
@@ -18,9 +19,11 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Defence in depth alongside middleware.ts - a layout that renders
-  // console data must never do so without a confirmed session.
-  if (!user) redirect("/console/sign-in");
+  // Defence in depth alongside proxy.ts - a layout that renders console
+  // data must never do so for a session that isn't a confirmed staff one
+  // (any signed-in account, including a public customer sign-up,
+  // otherwise satisfies a bare "is there a user" check).
+  if (!isStaff(user)) redirect("/console/sign-in");
 
   return (
     <div className="flex min-h-screen">
