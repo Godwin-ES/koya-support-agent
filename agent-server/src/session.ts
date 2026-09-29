@@ -96,6 +96,18 @@ export class Session {
   private cumulativeCostUsd = 0;
   private readonly speaksHoldingPhrase: boolean;
   private holdingPhrasesUsed = 0;
+  // The one outstanding read of the SDK's message stream, shared across
+  // turns. A turn used to start its own read and leave a pre-fetched one
+  // dangling when it ended, so the next turn's first message went to the
+  // abandoned read and was lost.
+  private pendingNext: Promise<IteratorResult<SDKMessage, void>> | null = null;
+  // Turns run strictly one at a time per conversation: two HTTP requests for
+  // the same call (Vapi sending the next turn while a cancelled one is
+  // still unwinding) must never read the same stream at once.
+  private turnLock: Promise<void> = Promise.resolve();
+  // Interrupted turns whose own result message hasn't been read yet - it
+  // must be skipped, not taken as the next turn's result.
+  private staleResults = 0;
 
   constructor(options: SessionOptions) {
     this.conversationId = options.conversationId;
@@ -159,6 +171,46 @@ export class Session {
     await this.query.interrupt();
   }
 
+  private nextMessage(): Promise<IteratorResult<SDKMessage, void>> {
+    if (!this.pendingNext) this.pendingNext = this.query.next();
+    return this.pendingNext;
+  }
+
+  private consumeMessage(): void {
+    this.pendingNext = null;
+  }
+
+  private async acquireTurn(): Promise<() => void> {
+    const previous = this.turnLock;
+    let release!: () => void;
+    this.turnLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    return release;
+  }
+
+  /**
+   * The SDK answers an interrupt by finishing the aborted turn with its own
+   * result message (an error_during_execution result - "on a clean interrupt
+   * this receipt is written before the interrupted turn result", its own
+   * docs). Reads and discards everything up to that result, so the next turn
+   * doesn't mistake it for its own failure. A real call hit exactly this:
+   * "I'm having trouble on my side right now" on the turn after an
+   * interruption. If the result doesn't arrive in time, the next turn skips
+   * it instead.
+   */
+  private async drainUntilResult(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const raced = await Promise.race([this.nextMessage().then((r) => ({ r })), sleep(Math.max(0, deadline - Date.now())).then(() => null)]);
+      if (!raced) break;
+      this.consumeMessage();
+      if (raced.r.done || raced.r.value.type === "result") return true;
+    }
+    return false;
+  }
+
   close(): void {
     this._closed = true;
     this.waiter?.();
@@ -166,6 +218,16 @@ export class Session {
 
   /** Pushes `userText`, streams the filtered reply, records the turn, and yields it as it goes. */
   async *runTurn(userText: string, opts: { interrupted?: () => boolean } = {}): AsyncGenerator<TurnEvent> {
+    const release = await this.acquireTurn();
+    try {
+      while (this.staleResults > 0 && (await this.drainUntilResult(5_000))) this.staleResults--;
+      yield* this.runTurnLocked(userText, opts);
+    } finally {
+      release();
+    }
+  }
+
+  private async *runTurnLocked(userText: string, opts: { interrupted?: () => boolean }): AsyncGenerator<TurnEvent> {
     this.push(userText);
 
     const startedAt = performance.now();
@@ -177,13 +239,12 @@ export class Session {
     let interrupted = false;
 
     try {
-      let nextPromise = this.query.next();
       for (;;) {
         let result: IteratorResult<SDKMessage, void>;
 
         if (this.speaksHoldingPhrase && firstTokenAt === null && !holdingSent) {
           const raced = await Promise.race([
-            nextPromise.then((r) => ({ kind: "message" as const, r })),
+            this.nextMessage().then((r) => ({ kind: "message" as const, r })),
             sleep(HOLDING_DELAY_MS).then(() => ({ kind: "timeout" as const })),
           ]);
           if (raced.kind === "timeout") {
@@ -195,15 +256,16 @@ export class Session {
           }
           result = raced.r;
         } else {
-          result = await nextPromise;
+          result = await this.nextMessage();
         }
+        this.consumeMessage();
         if (result.done) break;
         const message = result.value;
-        nextPromise = this.query.next();
 
         if (opts.interrupted?.()) {
           interrupted = true;
           await this.interrupt();
+          if (message.type !== "result" && !(await this.drainUntilResult(3_000))) this.staleResults++;
           // The caller talked over the reply or hung up mid-answer - still a
           // real turn, so it's recorded with what was said so far, flagged
           // interrupted. Its cost arrives with the session's next result

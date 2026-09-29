@@ -24,11 +24,16 @@ export interface VoicePageClientProps {
   onSignOut: () => Promise<void>;
   userName?: string | null;
   userEmail?: string | null;
+  /** First name to greet by - null for the shared demo account. */
+  greetingName?: string | null;
+  /** The linked customer's company, for a sample-customer login. */
+  companyName?: string | null;
 }
 
 /** The voice page (SYSTEM-DESIGN.md §11.7) - the one screen customers see, once signed in. */
-export function VoicePageClient({ accessToken, onSignOut, userName = null, userEmail = null }: VoicePageClientProps) {
-  const { callState, fullTranscript, partial = null, endOfCallSummary, remainingSeconds, startCall, endCall, subscribeToVolume } = useVoiceCall(accessToken);
+export function VoicePageClient({ accessToken, onSignOut, userName = null, userEmail = null, greetingName = null, companyName = null }: VoicePageClientProps) {
+  const voiceGreeting = greetingName ? `Hi ${greetingName}, thanks for calling RelayPay support. How can I help you today?` : undefined;
+  const { callState, fullTranscript, partial = null, endOfCallSummary, remainingSeconds, startCall, endCall, subscribeToVolume } = useVoiceCall(accessToken, { greeting: voiceGreeting });
   const [textMode, setTextMode] = useState(false);
   const [textDraft, setTextDraft] = useState<string | undefined>(undefined);
   const [hasStartedBefore, setHasStartedBefore] = useState(false);
@@ -37,7 +42,7 @@ export function VoicePageClient({ accessToken, onSignOut, userName = null, userE
   const actions = deriveCallActions(callState);
   const isActive = callState === "listening" || callState === "agent_speaking";
   const inCall = IN_CALL.includes(callState);
-  const firstName = userName?.trim().split(/\s+/)[0] ?? null;
+  const firstName = greetingName;
   const initials = initialsFrom(userName, userEmail);
   const hasConversation = fullTranscript.length > 0 || partial !== null || isActive || callState === "ending";
 
@@ -57,7 +62,7 @@ export function VoicePageClient({ accessToken, onSignOut, userName = null, userE
 
   return (
     <div className="bg-dot-grid flex min-h-dvh flex-col">
-      <AppHeader displayName={userName ?? userEmail} initials={initials} onSignOut={onSignOut} showSignOut={!inCall} />
+      <AppHeader displayName={userName ?? userEmail} companyName={companyName} initials={initials} onSignOut={onSignOut} showSignOut={!inCall} />
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-10">
         <h1 className="sr-only">RelayPay Support</h1>

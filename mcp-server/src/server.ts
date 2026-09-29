@@ -45,7 +45,7 @@ export function createServer(context: ToolContext): McpServer {
   server.registerTool(
     "lookup_customer",
     {
-      description: "Verify and look up a customer - needs two matching identifiers out of customer ID, email, company name and contact name.",
+      description: "Look up the signed-in caller's own customer account - status, plan and how to handle it. Needs no identifiers: the caller is identified by their sign-in. Any identifiers given must be their own.",
       inputSchema: {
         customer_id: z.string().optional(),
         email: z.string().optional(),
@@ -53,7 +53,7 @@ export function createServer(context: ToolContext): McpServer {
         contact_name: z.string().optional(),
       },
     },
-    async (input) => textResult(await callWithLogging(context, "lookup_customer", "verify the caller and look up their account", input, async () => {
+    async (input) => textResult(await callWithLogging(context, "lookup_customer", "look up the signed-in caller's own account", input, async () => {
       const result = await lookupCustomer(context, input);
       return { status: result.found ? "ok" : "not_found", result };
     })),
@@ -62,7 +62,7 @@ export function createServer(context: ToolContext): McpServer {
   server.registerTool(
     "lookup_transaction",
     {
-      description: "Look up a transaction by its reference. Full detail only for a verified caller.",
+      description: "Look up one of the signed-in caller's own transactions by its reference. Other customers' transactions are never returned.",
       inputSchema: { transaction_id: z.string().min(1) },
     },
     async (input) => textResult(await callWithLogging(context, "lookup_transaction", "look up a transaction the caller referenced", input, async () => {
@@ -74,7 +74,7 @@ export function createServer(context: ToolContext): McpServer {
   server.registerTool(
     "lookup_payout",
     {
-      description: "Look up a payout by payout ID or transaction ID. Full detail only for a verified caller.",
+      description: "Look up one of the signed-in caller's own payouts by payout ID or transaction ID. Other customers' payouts are never returned.",
       inputSchema: {
         payout_id: z.string().optional(),
         transaction_id: z.string().optional(),
@@ -112,8 +112,8 @@ export function createServer(context: ToolContext): McpServer {
       inputSchema: {
         ticket_id: z.string().optional(),
         customer_id: z.string().optional(),
-        user_name: z.string().min(1),
-        user_email: z.string(),
+        user_name: z.string().optional().describe("Leave out for a signed-in customer - their account's name is used."),
+        user_email: z.string().optional().describe("Leave out for a signed-in customer - their account's email is used."),
         category: z.string().describe('Exactly one of: "compliance", "account", "dispute", "payment", "other". KYC and identity-verification reviews are "compliance".'),
         reason: z.string().min(1),
         preferred_time: z.string().optional().describe("The callback time the caller asked for, as ISO-8601 with an offset (e.g. 2026-10-01T10:00:00+01:00). Required whenever the caller gave a time."),

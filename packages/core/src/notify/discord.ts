@@ -55,6 +55,11 @@ export function toDiscordPayload(message: DiscordMessage): Record<string, unknow
   };
 }
 
+/** Whether this process can post to `channel` at all. Tests and local servers with Discord switched off can't. */
+export function discordChannelEnabled(channel: DiscordChannel): boolean {
+  return Boolean(process.env[WEBHOOK_ENV[channel]]);
+}
+
 export async function sendDiscord(channel: DiscordChannel, message: DiscordMessage): Promise<boolean> {
   const webhook = process.env[WEBHOOK_ENV[channel]];
   if (!webhook) return false;

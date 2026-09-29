@@ -8,6 +8,7 @@
 // as a failure.
 import type { ToolContext } from "../context";
 import { isCategory, isPriority } from "./categories";
+import { verifiedCustomerId } from "./verification";
 import { newTicketMessage, sendDiscordAlert } from "../../notify/discord";
 
 export interface CreateSupportTicketInput {
@@ -27,12 +28,14 @@ const ALERTING_PRIORITIES = new Set(["high", "urgent"]);
 export async function createSupportTicket(context: ToolContext, input: CreateSupportTicketInput, options: { notify?: boolean } = {}): Promise<CreateSupportTicketResult> {
   if (!isCategory(input.category)) return { refused: true, reason: "invalid_category" };
   if (!isPriority(input.priority)) return { refused: true, reason: "invalid_priority" };
+  // Always the conversation's own customer, never one the model names.
+  const customerId = await verifiedCustomerId(context);
 
   const { data, error } = await context.supabase
     .from("support_tickets")
     .insert({
       conversation_id: context.conversationId,
-      customer_id: input.customer_id ?? null,
+      customer_id: customerId,
       category: input.category,
       priority: input.priority,
       summary: input.summary,
@@ -42,7 +45,7 @@ export async function createSupportTicket(context: ToolContext, input: CreateSup
 
   if (!error) {
     if (options.notify !== false && ALERTING_PRIORITIES.has(input.priority)) {
-      await sendDiscordAlert(newTicketMessage({ conversationId: context.conversationId, category: input.category, priority: input.priority, customerId: input.customer_id ?? null }));
+      await sendDiscordAlert(newTicketMessage({ conversationId: context.conversationId, category: input.category, priority: input.priority, customerId }));
     }
     return { ticket_id: data.id, status: "open" };
   }

@@ -95,13 +95,23 @@ export function createApp(deps: AppDeps) {
   // (authoritative, not a local JWT decode) - the same service-role client
   // used everywhere else works fine for this (Task 13: confirmed against
   // Supabase's own docs that client type isn't restricted for this call).
-  async function verifyCaller(accessToken: unknown): Promise<string | null> {
+  //
+  // `customerId` is the account's link to one customer record
+  // (app_metadata.customer_id, admin-set like the rest): every conversation
+  // the account starts is bound to that customer, and the account tools
+  // only ever read that customer's records. No link (the demo account, a
+  // reviewer invite) means general questions only.
+  async function verifyCallerAccount(accessToken: unknown): Promise<{ id: string; customerId: string | null } | null> {
     if (typeof accessToken !== "string" || !accessToken) return null;
     const { data, error } = await supabase.auth.getUser(accessToken);
     if (error || !data.user) return null;
-    const meta = data.user.app_metadata as { invited?: unknown; is_staff?: unknown } | undefined;
+    const meta = data.user.app_metadata as { invited?: unknown; is_staff?: unknown; customer_id?: unknown } | undefined;
     if (meta?.invited !== true && meta?.is_staff !== true) return null;
-    return data.user.id;
+    return { id: data.user.id, customerId: typeof meta?.customer_id === "string" ? meta.customer_id : null };
+  }
+
+  async function verifyCaller(accessToken: unknown): Promise<string | null> {
+    return (await verifyCallerAccount(accessToken))?.id ?? null;
   }
 
   // -- GET /api/limits -------------------------------------------------------
@@ -133,11 +143,12 @@ export function createApp(deps: AppDeps) {
     const body = req.body as { channel?: "web_voice" | "web_text"; access_token?: string };
     const channel: Channel = body.channel === "web_text" ? "web_text" : "web_voice";
     const pool = poolFor(channel);
-    const callerRef = await verifyCaller(body.access_token);
-    if (!callerRef) {
+    const account = await verifyCallerAccount(body.access_token);
+    if (!account) {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
+    const callerRef = account.id;
 
     try {
       if (channel === "web_voice") {
@@ -159,7 +170,7 @@ export function createApp(deps: AppDeps) {
         return;
       }
 
-      const { data, error } = await supabase.from("conversations").insert({ channel, caller_ref: callerRef, model: deps.model }).select("id").single();
+      const { data, error } = await supabase.from("conversations").insert({ channel, caller_ref: callerRef, model: deps.model, verified_customer_id: account.customerId }).select("id").single();
       if (error) throw error;
       const conversationId = data.id as string;
 
@@ -203,6 +214,26 @@ export function createApp(deps: AppDeps) {
       escalation: esc ? { reference: caseReference("escalation", esc.id), category: esc.category, callback_time: esc.callback_time } : null,
       ticket: tkt ? { reference: caseReference("ticket", tkt.id), category: tkt.category } : null,
     });
+  });
+
+  // -- GET /api/conversations/:id/turns ---------------------------------------
+  // The voice page's clean transcript: each recorded turn as the server
+  // received and answered it - the caller's whole message and the agent's
+  // exact reply - replacing Vapi's live captions, which are split wherever
+  // the speech paused. Same conversation-token authorisation as /outcome.
+  app.get("/api/conversations/:id/turns", async (req: Request, res: Response) => {
+    const conversationId = String(req.params.id);
+    const token = req.header("authorization")?.match(/^Bearer (.+)$/i)?.[1];
+    if (!token || !verifyConversationToken(deps.conversationTokenSecret, token, conversationId)) {
+      res.status(401).json({ error: "invalid or expired token" });
+      return;
+    }
+    const { data, error } = await supabase.from("conversation_turns").select("seq, user_transcript, assistant_response").eq("conversation_id", conversationId).order("seq");
+    if (error) {
+      res.status(500).json({ error: "internal error" });
+      return;
+    }
+    res.json({ turns: data ?? [] });
   });
 
   // -- POST /vapi/chat/completions -------------------------------------------

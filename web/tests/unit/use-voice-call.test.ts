@@ -99,3 +99,56 @@ describe("useVoiceCall - timers", () => {
     expect(result.current.endOfCallSummary).toMatchObject({ endedDueToSilence: false });
   });
 });
+
+describe("useVoiceCall - the transcript", () => {
+  let stub: StubVapi;
+  const line = (role: "user" | "assistant", transcript: string) => ({ type: "transcript", role, transcript, transcriptType: "final" });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    stub = new StubVapi();
+    (globalThis as { __VAPI_STUB__?: StubVapi }).__VAPI_STUB__ = stub;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      if (String(url).endsWith("/turns")) {
+        return new Response(JSON.stringify({ turns: [{ seq: 1, user_transcript: "What fee do you charge for international payments?", assistant_response: "Fees vary by corridor, and you see the exact fee before you confirm." }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ conversation_id: "c1", token: "t1" }), { status: 200 });
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    delete (globalThis as { __VAPI_STUB__?: StubVapi }).__VAPI_STUB__;
+  });
+
+  it("replaces Vapi's fragmented lines with the recorded turn once the agent finishes speaking, keeping the greeting", async () => {
+    const greeting = "Hi Amara, thanks for calling RelayPay support. How can I help you today?";
+    const { result } = renderHook(() => useVoiceCall("test-access-token", { greeting }));
+    await act(async () => {
+      await result.current.startCall();
+    });
+    expect(stub.start.mock.calls[0]![1]).toMatchObject({ firstMessage: greeting });
+
+    act(() => {
+      stub.emit("call-start");
+      stub.emit("message", line("assistant", "Hi Amara, thanks for calling RelayPay support."));
+      stub.emit("message", line("user", "What fee do you charge"));
+      stub.emit("message", line("user", "for international payments?"));
+      stub.emit("speech-start");
+      stub.emit("message", line("assistant", "Fees for Internet"));
+      stub.emit("message", line("assistant", "international payments vary."));
+    });
+    expect(result.current.fullTranscript).toHaveLength(5);
+
+    act(() => stub.emit("speech-end"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+    });
+    expect(result.current.fullTranscript).toEqual([
+      { role: "assistant", text: greeting },
+      { role: "user", text: "What fee do you charge for international payments?" },
+      { role: "assistant", text: "Fees vary by corridor, and you see the exact fee before you confirm." },
+    ]);
+  });
+});

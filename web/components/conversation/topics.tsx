@@ -14,6 +14,27 @@ export const TOPICS: Topic[] = [
   { icon: ShieldCheck, title: "Account & security", prompt: "How do I verify my account?" },
 ];
 
+/** The same starters as small chips, for tight spaces (above the chat composer). */
+export function TopicChips({ onPick, className }: { onPick: (prompt: string) => void; className?: string }) {
+  return (
+    <ul className={cn("flex flex-wrap gap-2", className)}>
+      {TOPICS.map(({ icon: Icon, title, prompt }) => (
+        <li key={title}>
+          <button
+            type="button"
+            onClick={() => onPick(prompt)}
+            title={prompt}
+            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-medium text-[var(--color-text)] [transition:border-color_var(--transition-fast),background-color_var(--transition-fast)] hover:border-[var(--color-accent)]/40 hover:bg-[var(--color-accent-softer)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+          >
+            <Icon className="size-3.5 text-[var(--color-accent)]" aria-hidden="true" />
+            {title}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** Starter questions - picking one opens the text chat with it ready to send, never sent automatically. */
 export function TopicGrid({ onPick, disabled, compact, className }: { onPick: (prompt: string) => void; disabled?: boolean; compact?: boolean; className?: string }) {
   return (

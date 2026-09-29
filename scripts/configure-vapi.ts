@@ -43,6 +43,18 @@ const assistant = {
   serverMessages: ["end-of-call-report", "status-update", "hang"] as const,
   voice: { provider: "vapi" as const, voiceId: "Clara" },
   maxDurationSeconds: 300,
+  // When to decide the caller has finished speaking (types checked against
+  // the installed @vapi-ai/web StartSpeakingPlan). A live call showed the
+  // default replying to half a sentence ("Showing the" got its own answer,
+  // and the rest of the sentence became a second, overlapping turn).
+  // LiveKit's smart endpointing - which the type docs "strongly recommend"
+  // for English - judges from the words whether the thought is finished; a
+  // longer minimum wait and slower transcription fallbacks back it up.
+  startSpeakingPlan: {
+    waitSeconds: 0.8,
+    smartEndpointingPlan: { provider: "livekit" as const },
+    transcriptionEndpointingPlan: { onPunctuationSeconds: 0.5, onNoPunctuationSeconds: 2.0, onNumberSeconds: 1.0 },
+  },
   // Privacy note on the voice page promises this - transcripts only, never
   // a recording. Verified against Vapi's live OpenAPI spec (Task 13): this
   // is `artifactPlan.recordingEnabled`, not a top-level assistant field -

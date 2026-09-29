@@ -1,21 +1,20 @@
 // lookup_transaction (SYSTEM-DESIGN.md §5, mcp-tool-requirements.md).
 //
-// Amount, currency and destination only go back once the caller is
-// verified as *that transaction's* customer (lookup_customer having
-// already matched conversations.verified_customer_id) - otherwise status
-// only, plus guidance to verify. A "review required" status always adds
-// an escalate guidance, verified or not, since that's a human decision
-// either way.
+// Only the signed-in caller's own transactions (verification.ts). Anyone
+// else's - or one that doesn't exist - gets the same "not on this account",
+// so not even a status leaks. A "review required" status adds an escalate
+// guidance, since that's a human decision.
 import type { ToolContext } from "../context";
 import { normalizeReference } from "../reference";
-import { verifiedCustomerId } from "./verification";
+import { NO_CUSTOMER_ACCOUNT, NOT_ON_THIS_ACCOUNT, verifiedCustomerId } from "./verification";
 
 export interface LookupTransactionInput {
   transaction_id: string;
 }
 
 export type LookupTransactionResult =
-  | { found: false; reason: "not_found" }
+  | typeof NO_CUSTOMER_ACCOUNT
+  | typeof NOT_ON_THIS_ACCOUNT
   | {
       found: true;
       transaction_id: string;
@@ -30,6 +29,8 @@ export type LookupTransactionResult =
     };
 
 export async function lookupTransaction(context: ToolContext, input: LookupTransactionInput): Promise<LookupTransactionResult> {
+  const customerId = await verifiedCustomerId(context);
+  if (!customerId) return NO_CUSTOMER_ACCOUNT;
   const normalized = normalizeReference("TXN", input.transaction_id);
 
   const { data, error } = await context.supabase
@@ -38,20 +39,8 @@ export async function lookupTransaction(context: ToolContext, input: LookupTrans
     .eq("transaction_id", normalized)
     .maybeSingle();
   if (error) throw error;
-  if (!data) return { found: false, reason: "not_found" };
-
-  const verifiedId = await verifiedCustomerId(context);
-  const isVerified = verifiedId !== null && verifiedId === data.customer_id;
+  if (!data || data.customer_id !== customerId) return NOT_ON_THIS_ACCOUNT;
   const escalate = data.status === "review required";
-
-  if (!isVerified) {
-    return {
-      found: true,
-      transaction_id: data.transaction_id,
-      status: data.status,
-      guidance: escalate ? "escalate" : "verify caller for details",
-    };
-  }
 
   return {
     found: true,

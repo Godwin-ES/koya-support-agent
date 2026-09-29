@@ -5,7 +5,7 @@
 // handover note if a conversation already has turns recorded but no live
 // session (a lost worker).
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildHandoverNote, type Channel, type PriorTurn } from "@core/agent";
+import { buildHandoverNote, callerContextNote, type BoundCustomer, type Channel, type PriorTurn } from "@core/agent";
 import { RetryBuffer } from "@core/domain/write-buffer";
 import { supabaseDegradedMessage, sendDiscordAlert } from "@core/notify/discord";
 import { Session, type SessionOptions } from "./session";
@@ -122,8 +122,8 @@ export class SessionManager {
     }
     if (this.isFull(pool)) throw new SessionCapacityError(this.limits[pool], pool);
 
-    const priorTurns = await this.fetchPriorTurns(conversationId);
-    const handoverNote = priorTurns.length > 0 ? buildHandoverNote(priorTurns) : undefined;
+    const [priorTurns, customer] = await Promise.all([this.fetchPriorTurns(conversationId), this.fetchBoundCustomer(conversationId)]);
+    const handoverNote = callerContextNote(customer) + (priorTurns.length > 0 ? buildHandoverNote(priorTurns) : "");
 
     const sessionOptions: SessionOptions = {
       conversationId,
@@ -176,6 +176,16 @@ export class SessionManager {
   stopIdleSweep(): void {
     if (this.sweepHandle) clearInterval(this.sweepHandle);
     this.sweepHandle = null;
+  }
+
+  private async fetchBoundCustomer(conversationId: string): Promise<BoundCustomer | null> {
+    const { data, error } = await this.options.supabase.from("conversations").select("verified_customer_id").eq("id", conversationId).maybeSingle();
+    if (error) throw error;
+    const customerId = (data as { verified_customer_id: string | null } | null)?.verified_customer_id;
+    if (!customerId) return null;
+    const { data: customer, error: customerError } = await this.options.supabase.from("customers").select("customer_id, company_name, contact_name, contact_email").eq("customer_id", customerId).maybeSingle();
+    if (customerError) throw customerError;
+    return (customer as BoundCustomer | null) ?? null;
   }
 
   private async fetchPriorTurns(conversationId: string): Promise<PriorTurn[]> {

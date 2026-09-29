@@ -146,6 +146,26 @@ describe("SessionManager", () => {
     expect(events.at(-1)).toMatchObject({ kind: "done", interrupted: true });
   });
 
+  it("the turn after an interruption gets its own reply, not the interrupted turn's leftover error result (a real call's \"I'm having trouble\")", async () => {
+    const conversationId = await newConversation();
+    // What the SDK really emits: the interrupted turn keeps streaming a little,
+    // then ends with its own error_during_execution result - and only then
+    // does the next turn's reply begin.
+    const script = [textDelta("It looks like"), textDelta(" your message"), textDelta(" got cut"), textDelta(" off."), failedResultMessage(), textDelta("Fees vary by corridor."), resultMessage()];
+    const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", queryFactory: scriptedQueryFactory(script) });
+    const session = await manager.getOrCreate(conversationId);
+
+    let seen = 0;
+    for await (const _event of session.runTurn("Showing the", { interrupted: () => ++seen >= 2 })) void _event;
+
+    const second = [];
+    for await (const event of session.runTurn("What fees do you charge for international payments?")) second.push(event);
+    const reply = second.filter((e) => e.kind === "delta").map((e) => (e as { text: string }).text).join("");
+    expect(reply).toBe("Fees vary by corridor.");
+    expect(second.at(-1)).toMatchObject({ kind: "done", interrupted: false });
+    expect(session.closed).toBe(false);
+  });
+
   it("enforces the concurrency cap (at most 3 sessions at once)", async () => {
     const manager = new SessionManager({
       supabase,

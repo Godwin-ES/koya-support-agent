@@ -3,9 +3,14 @@
 // the daily digest. `ops_alerts` (migration 012) is the "already sent"
 // record, keyed per day, so a restart or a second process never sends the
 // same one twice; `ops_events` (migration 015) is what the digest counts.
+//
+// A process that can't post to a channel does none of that channel's
+// bookkeeping. The database is shared, so a local server or a test run with
+// Discord switched off used to mark today's spend alert as sent (production
+// then never posted it) and add test events to the digest's counts.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { startOfTodayUtc } from "@core/agent";
-import { capacityMessage, dailyDigestMessage, limitReachedMessage, sendDiscordActivity, sendDiscordAlert, spendThresholdMessage } from "@core/notify/discord";
+import { capacityMessage, dailyDigestMessage, discordChannelEnabled, limitReachedMessage, sendDiscordActivity, sendDiscordAlert, spendThresholdMessage } from "@core/notify/discord";
 import type { Pool } from "./session-manager";
 import { isFailedTurn } from "./lifecycle";
 
@@ -39,6 +44,7 @@ export class OpsNotifier {
 
   /** Every rejection is counted for the digest; at most one alert per pool per 10 minutes. */
   async capacityRejected(pool: Pool, limit: number, now: number = Date.now()): Promise<void> {
+    if (!discordChannelEnabled("alerts")) return;
     await recordOpsEvent(this.supabase, "capacity_rejected", { pool }).catch(() => undefined);
     const last = this.lastCapacityAlert[pool] ?? 0;
     if (now - last < CAPACITY_ALERT_EVERY_MS) return;
@@ -48,13 +54,14 @@ export class OpsNotifier {
 
   /** Once per account per kind per day. The account id is only a dedupe key - it's never posted. */
   async limitReached(kind: "calls" | "chat", callerRef: string, limit: number, now: Date = new Date()): Promise<void> {
+    if (!discordChannelEnabled("activity")) return;
     if (!(await claimOnce(this.supabase, `limit:${kind}:${callerRef}:${utcDay(now)}`).catch(() => false))) return;
     await recordOpsEvent(this.supabase, "limit_reached", { kind }).catch(() => undefined);
     await sendDiscordActivity(limitReachedMessage({ kind, limit }));
   }
 
   async checkDailySpend(now: Date = new Date()): Promise<void> {
-    if (!(this.spendThresholdUsd > 0)) return;
+    if (!(this.spendThresholdUsd > 0) || !discordChannelEnabled("alerts")) return;
     const spent = await claudeSpendBetween(this.supabase, startOfTodayUtc(now), now.toISOString());
     if (spent < this.spendThresholdUsd) return;
     if (!(await claimOnce(this.supabase, `spend:${utcDay(now)}`))) return;
@@ -63,7 +70,7 @@ export class OpsNotifier {
 
   /** Yesterday's digest, sent once after DIGEST_HOUR_UTC. Skipped for a day with no activity at all. */
   async maybeSendDailyDigest(now: Date = new Date()): Promise<boolean> {
-    if (now.getUTCHours() < DIGEST_HOUR_UTC) return false;
+    if (now.getUTCHours() < DIGEST_HOUR_UTC || !discordChannelEnabled("activity")) return false;
     const todayStart = startOfTodayUtc(now);
     const yesterdayStart = new Date(new Date(todayStart).getTime() - 24 * 60 * 60_000).toISOString();
     const day = yesterdayStart.slice(0, 10);

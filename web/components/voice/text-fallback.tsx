@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { ActionButton } from "@/components/primitives/action-button";
 import { AgentAvatar } from "@/components/conversation/avatars";
 import { MessageThread } from "@/components/conversation/message-thread";
-import { TopicGrid } from "@/components/conversation/topics";
+import { TopicChips } from "@/components/conversation/topics";
 
 export interface TextFallbackProps {
   accessToken: string;
@@ -139,20 +139,12 @@ function TextChat({ accessToken, onSwitchToVoice, initialDraft, userInitials = "
       </header>
 
       <MessageThread
-        messages={turns}
+        messages={[{ role: "assistant", text: firstName ? `Hi ${firstName}, how can I help you today?` : "Hi, how can I help you today?" }, ...turns]}
         agentTyping={agentTyping}
         streamingLast={isStreaming}
         userInitials={userInitials}
         label="Conversation"
         className="bg-[var(--color-bg)]"
-        emptyState={
-          <div className="mx-auto flex max-w-lg flex-col items-center py-6 text-center">
-            <AgentAvatar className="size-12" />
-            <p className="mt-4 text-lg font-semibold text-[var(--color-text)]">{firstName ? `Hi ${firstName}, how can we help?` : "How can we help?"}</p>
-            <p className="mt-1 text-sm text-[var(--color-text-muted)]">Ask anything about payments, payouts, invoices or your account.</p>
-            <TopicGrid onPick={pickTopic} compact className="mt-6" />
-          </div>
-        }
       />
 
       {closing && !isEnded ? (
@@ -195,6 +187,11 @@ function TextChat({ accessToken, onSwitchToVoice, initialDraft, userInitials = "
         </div>
       ) : (
         <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] p-3 sm:p-4">
+          {!hasSentAMessage && (
+            <div className="mb-3">
+              <TopicChips onPick={pickTopic} />
+            </div>
+          )}
           {sendError && (
             <p role="alert" className="mb-2 px-1 text-sm text-[var(--color-danger-text)]">
               {sendError}

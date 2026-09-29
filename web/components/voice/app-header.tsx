@@ -1,21 +1,62 @@
-import { LogOut } from "lucide-react";
+import Link from "next/link";
+import { History, Headset, LogOut } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Wordmark } from "@/components/brand/wordmark";
 import { UserAvatar } from "@/components/conversation/avatars";
 
-export function AppHeader({ displayName, initials, onSignOut, showSignOut }: { displayName: string | null; initials: string; onSignOut: () => Promise<void>; showSignOut: boolean }) {
+const NAV = [
+  { href: "/", label: "Support", icon: Headset, key: "support" },
+  { href: "/history", label: "History", icon: History, key: "history" },
+] as const;
+
+export function AppHeader({
+  displayName,
+  companyName = null,
+  initials,
+  onSignOut,
+  showSignOut,
+  current = "support",
+}: {
+  displayName: string | null;
+  companyName?: string | null;
+  initials: string;
+  onSignOut: () => Promise<void>;
+  showSignOut: boolean;
+  current?: "support" | "history";
+}) {
   return (
     <header className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-surface)]/90 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
         <div className="flex items-center gap-3">
           <Wordmark className="text-xl" />
           <span className="hidden h-5 w-px bg-[var(--color-border)] sm:block" aria-hidden="true" />
-          <span className="hidden text-sm font-medium text-[var(--color-text-muted)] sm:block">Support</span>
+          {/* Hidden mid-call, like Sign out: leaving the page would drop the call. */}
+          <nav aria-label="App" className={cn("flex items-center gap-1", !showSignOut && "invisible")}>
+            {NAV.map(({ href, label, icon: Icon, key }) => (
+              <Link
+                key={key}
+                href={href}
+                aria-current={current === key ? "page" : undefined}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 py-1.5 text-sm font-medium [transition:background-color_var(--transition-fast),color_var(--transition-fast)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]",
+                  current === key ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-hover)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]",
+                )}
+              >
+                <Icon className="size-4" aria-hidden="true" />
+                <span className="hidden sm:inline">{label}</span>
+                <span className="sr-only sm:hidden">{label}</span>
+              </Link>
+            ))}
+          </nav>
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
           {displayName && (
             <div className="flex items-center gap-2.5">
               <UserAvatar initials={initials} className="ring-0" />
-              <span className="hidden max-w-[180px] truncate text-sm font-medium text-[var(--color-text)] sm:block">{displayName}</span>
+              <span className="hidden min-w-0 flex-col leading-tight sm:flex">
+                <span className="max-w-[200px] truncate text-sm font-medium text-[var(--color-text)]">{displayName}</span>
+                {companyName && <span className="max-w-[200px] truncate text-xs text-[var(--color-text-muted)]">{companyName}</span>}
+              </span>
             </div>
           )}
           {showSignOut && (

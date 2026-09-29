@@ -61,14 +61,33 @@ async function fetchOutcome(conversation: { id: string; token: string }): Promis
   return null;
 }
 
+/** scripts/configure-vapi.ts's own firstMessage - what Vapi says when there's no per-call greeting. */
+const DEFAULT_GREETING = "Thanks for calling RelayPay support. How can I help you today?";
+
 /** SYSTEM-DESIGN.md §9: the two client-visible call limits. Vapi enforces `MAX_CALL_SECONDS` itself server-side (`maxDurationSeconds` on the assistant) - this is only the matching visual countdown. `SILENCE_TIMEOUT_MS` has no Vapi-side equivalent at all (verified against its live API, Task 13) and is enforced entirely here. */
 export const MAX_CALL_SECONDS = 300;
 const SILENCE_TIMEOUT_MS = 30_000;
 
 /** `accessToken` is the signed-in caller's Supabase session token (from `page.tsx`'s server-side session check) - agent-server verifies it (`supabase.auth.getUser(token)`) to derive `caller_ref` for the daily limit, replacing the old IP+browser-id hash now that every caller has a real account. */
-export function useVoiceCall(accessToken: string) {
+interface RecordedTurn {
+  user_transcript: string;
+  assistant_response: string;
+}
+
+/**
+ * `greeting` replaces the assistant's default first line for this call
+ * ("Hi Amara, thanks for calling...") via Vapi's per-call firstMessage
+ * override.
+ */
+export function useVoiceCall(accessToken: string, options: { greeting?: string } = {}) {
   const [callState, setCallState] = useState<CallState>("idle");
-  const [fullTranscript, setFullTranscript] = useState<TranscriptTurn[]>([]);
+  // Vapi's own transcript lines, as they arrive - live, but split wherever
+  // the speech paused. Once a turn is recorded on the server, the recorded
+  // version (the caller's whole message, the agent's exact reply) replaces
+  // them: `recorded` plus whatever Vapi lines came after the last sync.
+  const [liveLines, setLiveLines] = useState<TranscriptTurn[]>([]);
+  const [recorded, setRecorded] = useState<TranscriptTurn[]>([]);
+  const [linesSuperseded, setLinesSuperseded] = useState(0);
   const [endOfCallSummary, setEndOfCallSummary] = useState<EndOfCallSummary | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [partial, setPartial] = useState<TranscriptTurn | null>(null);
@@ -82,6 +101,26 @@ export function useVoiceCall(accessToken: string) {
   // Volume arrives many times a second - listeners are called directly so
   // the orb can animate without re-rendering the whole page.
   const volumeListenersRef = useRef(new Set<(volume: number) => void>());
+  const liveLineCountRef = useRef(0);
+  const recordedTurnCountRef = useRef(0);
+  const greeting = options.greeting;
+
+  const syncRecordedTurns = useCallback(async () => {
+    const conversation = conversationRef.current;
+    if (!conversation) return;
+    const mark = liveLineCountRef.current;
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/conversations/${conversation.id}/turns`, { headers: { Authorization: `Bearer ${conversation.token}` } });
+      if (!res.ok) return;
+      const body = (await res.json()) as { turns?: RecordedTurn[] };
+      if (!Array.isArray(body.turns) || body.turns.length <= recordedTurnCountRef.current) return;
+      recordedTurnCountRef.current = body.turns.length;
+      setRecorded(body.turns.flatMap((t) => [{ role: "user" as const, text: t.user_transcript }, ...(t.assistant_response ? [{ role: "assistant" as const, text: t.assistant_response }] : [])]));
+      setLinesSuperseded(mark);
+    } catch {
+      // Live lines stay on screen; the next sync tries again.
+    }
+  }, []);
 
   const getVapi = useCallback((): Vapi => {
     if (!vapiRef.current) {
@@ -101,8 +140,13 @@ export function useVoiceCall(accessToken: string) {
         lastActivityAtRef.current = Date.now();
         setCallState("agent_speaking");
       });
-      vapi.on("speech-end", () => setCallState((s) => (s === "agent_speaking" ? "listening" : s)));
+      vapi.on("speech-end", () => {
+        setCallState((s) => (s === "agent_speaking" ? "listening" : s));
+        // The agent finished speaking, so its turn is recorded (or about to be).
+        setTimeout(() => void syncRecordedTurns(), 700);
+      });
       vapi.on("call-end", () => {
+        void syncRecordedTurns();
         // "What happens next" comes from the records this call created
         // (SYSTEM-DESIGN.md §11.7), fetched once it ends - not from the
         // agent's last spoken line, which Vapi delivers a clause at a time
@@ -140,16 +184,21 @@ export function useVoiceCall(accessToken: string) {
           return;
         }
         setPartial(null);
-        setFullTranscript((prev) => [...prev, { role: message.role, text: message.transcript }]);
+        liveLineCountRef.current++;
+        setLiveLines((prev) => [...prev, { role: message.role, text: message.transcript }]);
       });
       vapiRef.current = vapi;
     }
     return vapiRef.current;
-  }, []);
+  }, [syncRecordedTurns]);
 
   const startCall = useCallback(async () => {
     setCallState("requesting");
-    setFullTranscript([]);
+    setLiveLines([]);
+    setRecorded([]);
+    setLinesSuperseded(0);
+    liveLineCountRef.current = 0;
+    recordedTurnCountRef.current = 0;
     setEndOfCallSummary(null);
     setRemainingSeconds(null);
     setPartial(null);
@@ -186,11 +235,11 @@ export function useVoiceCall(accessToken: string) {
 
     setCallState("connecting");
     try {
-      await getVapi().start(process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID!, { metadata: { conversation_id, token } });
+      await getVapi().start(process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID!, { metadata: { conversation_id, token }, ...(greeting ? { firstMessage: greeting } : {}) });
     } catch {
       setCallState("unavailable");
     }
-  }, [getVapi, accessToken]);
+  }, [getVapi, accessToken, greeting]);
 
   const endCall = useCallback(() => {
     setCallState("ending");
@@ -243,6 +292,11 @@ export function useVoiceCall(accessToken: string) {
       volumeListenersRef.current.delete(listener);
     };
   }, []);
+
+  // The greeting isn't a recorded turn (Vapi speaks it itself), so it's kept
+  // at the top once the recorded turns take over.
+  const opening: TranscriptTurn[] = recorded.length > 0 ? [{ role: "assistant", text: greeting ?? DEFAULT_GREETING }] : [];
+  const fullTranscript = [...opening, ...recorded, ...liveLines.slice(linesSuperseded)];
 
   return { callState, fullTranscript, partial, endOfCallSummary, remainingSeconds, startCall, endCall, subscribeToVolume };
 }

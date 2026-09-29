@@ -1,20 +1,19 @@
 // lookup_customer (SYSTEM-DESIGN.md §5, mcp-tool-requirements.md).
 //
-// "Needs two matching identifiers": the caller-supplied identifiers are
-// matched independently against every customer row (the seed set is a
-// handful of rows - simplest and safest to compare in code rather than
-// build a fragile OR-filter string), and the customer with the most
-// matches wins. Fewer than two identifiers supplied at all is
-// "not_enough_to_verify" even before checking the data; two or more
-// supplied but no customer matching at least two of them is "not_found" -
-// a caller who guesses one real value and one wrong one doesn't verify.
+// Returns the signed-in caller's own customer record and nothing else.
+// Identity comes from the sign-in (the conversation's verified_customer_id,
+// set by agent-server), not from identifiers spoken in the call - it used
+// to verify anyone who could name two matching details, and wrote that
+// match onto the conversation, so saying "I'm Amara from LagosLedger"
+// unlocked Amara's records for whoever said it. Identifiers the caller
+// gives are only checked against their own record: naming a different
+// customer is refused.
 //
 // support_notes is internal (SYSTEM-DESIGN.md §5: "never returned for
 // reading aloud") - the tool returns a fixed, category-based `guidance`
-// string derived from account/KYC status instead of the note's own text,
-// so nothing written by a human reviewer for another human ever reaches a
-// spoken response.
+// string derived from account/KYC status instead of the note's own text.
 import type { ToolContext } from "../context";
+import { NO_CUSTOMER_ACCOUNT, verifiedCustomerId } from "./verification";
 
 export interface LookupCustomerInput {
   customer_id?: string;
@@ -24,11 +23,13 @@ export interface LookupCustomerInput {
 }
 
 export type LookupCustomerResult =
-  | { found: false; reason: "not_enough_to_verify" | "not_found" }
+  | typeof NO_CUSTOMER_ACCOUNT
+  | { found: false; reason: "not_this_account"; guidance: string }
   | {
       found: true;
       customer_id: string;
       company_name: string;
+      contact_name: string;
       plan: string;
       account_status: string;
       kyc_status: string;
@@ -49,28 +50,18 @@ function eqCi(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
-// Real finding, from Task 12's own evaluation run: the PRD's own scenario 3
-// script ("I am Amara from LagosLedger") gives only a first name, but the
-// seed record's contact_name is "Amara Okafor" - an exact match rejected
-// this, so the PRD's own documented example failed to verify. A caller
-// giving their first name on a support call is completely normal, so
-// contact_name matches on a case-insensitive prefix instead of exact
-// equality ("Amara" matches "Amara Okafor"; "Amara Okafor" still matches
-// itself). company_name stays an exact match - abbreviating a company name
-// is much less natural than a first name, and keeping one identifier exact
-// preserves the two-factor guarantee (a caller still needs the *right*
-// company, not just any name that happens to start with the right letters).
+// A first name is a normal way to say who you are ("Amara" matches "Amara Okafor").
 function contactNameMatches(recordName: string, given: string): boolean {
   return recordName.trim().toLowerCase().startsWith(given.trim().toLowerCase());
 }
 
-function matchCount(row: CustomerRow, input: LookupCustomerInput): number {
-  let n = 0;
-  if (input.customer_id && row.customer_id === input.customer_id) n++;
-  if (input.email && eqCi(row.contact_email, input.email)) n++;
-  if (input.company_name && eqCi(row.company_name, input.company_name)) n++;
-  if (input.contact_name && contactNameMatches(row.contact_name, input.contact_name)) n++;
-  return n;
+/** Whether every identifier the caller gave belongs to this record. */
+function describesRecord(row: CustomerRow, input: LookupCustomerInput): boolean {
+  if (input.customer_id && row.customer_id !== input.customer_id.trim().toUpperCase()) return false;
+  if (input.email && !eqCi(row.contact_email, input.email)) return false;
+  if (input.company_name && !eqCi(row.company_name, input.company_name)) return false;
+  if (input.contact_name && !contactNameMatches(row.contact_name, input.contact_name)) return false;
+  return true;
 }
 
 function guidanceFor(row: CustomerRow): string {
@@ -81,36 +72,29 @@ function guidanceFor(row: CustomerRow): string {
 }
 
 export async function lookupCustomer(context: ToolContext, input: LookupCustomerInput): Promise<LookupCustomerResult> {
-  const providedCount = [input.customer_id, input.email, input.company_name, input.contact_name].filter(Boolean).length;
-  if (providedCount < 2) return { found: false, reason: "not_enough_to_verify" };
+  const customerId = await verifiedCustomerId(context);
+  if (!customerId) return NO_CUSTOMER_ACCOUNT;
 
   const { data, error } = await context.supabase
     .from("customers")
-    .select("customer_id, company_name, contact_name, contact_email, plan, account_status, kyc_status");
+    .select("customer_id, company_name, contact_name, contact_email, plan, account_status, kyc_status")
+    .eq("customer_id", customerId)
+    .single();
   if (error) throw error;
+  const row = data as CustomerRow;
 
-  const rows = (data ?? []) as CustomerRow[];
-  let best: CustomerRow | null = null;
-  let bestScore = 0;
-  for (const row of rows) {
-    const score = matchCount(row, input);
-    if (score > bestScore) {
-      best = row;
-      bestScore = score;
-    }
+  if (!describesRecord(row, input)) {
+    return { found: false, reason: "not_this_account", guidance: "The caller can only ask about their own account, which is the one they're signed in with. Don't discuss any other customer." };
   }
-
-  if (!best || bestScore < 2) return { found: false, reason: "not_found" };
-
-  await context.supabase.from("conversations").update({ verified_customer_id: best.customer_id }).eq("id", context.conversationId);
 
   return {
     found: true,
-    customer_id: best.customer_id,
-    company_name: best.company_name,
-    plan: best.plan,
-    account_status: best.account_status,
-    kyc_status: best.kyc_status,
-    guidance: guidanceFor(best),
+    customer_id: row.customer_id,
+    company_name: row.company_name,
+    contact_name: row.contact_name,
+    plan: row.plan,
+    account_status: row.account_status,
+    kyc_status: row.kyc_status,
+    guidance: guidanceFor(row),
   };
 }

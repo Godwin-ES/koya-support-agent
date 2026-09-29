@@ -25,6 +25,8 @@ export default defineConfig({
     alias: {
       "@core": path.resolve(rootDir, "packages/core/src"),
       "@": path.resolve(rootDir, "web"),
+      // Server-only modules (web/lib/server/*) are plain code under test.
+      "server-only": path.resolve(rootDir, "tests/stubs/server-only.ts"),
     },
     // Same guard as week 5 (BUILD-NOTES-NEXTJS.md Task 6): a stray
     // web/pnpm-lock.yaml would give web/ its own disconnected node_modules

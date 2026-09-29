@@ -48,8 +48,9 @@ async function loggedCreateEscalation(context: ToolContext, input: Parameters<ty
 const supabase: SupabaseClient = serviceRoleClient();
 const conversationIds: string[] = [];
 
-async function newConversation(): Promise<string> {
-  const { data, error } = await supabase.from("conversations").insert({ channel: "web_text" }).select("id").single();
+/** `customerId`: who's signed in - the conversation is bound to them, as agent-server does from the account. */
+async function newConversation(customerId: string | null = null): Promise<string> {
+  const { data, error } = await supabase.from("conversations").insert({ channel: "web_text", verified_customer_id: customerId }).select("id").single();
   if (error) throw error;
   conversationIds.push(data.id as string);
   return data.id as string;
@@ -67,7 +68,7 @@ afterEach(async () => {
 
 describe("recorded-session replay through the real MCP tools", () => {
   it("Scenario 3 (customer lookup): a verified lookup replays to answer_type 'answer'", async () => {
-    const conversationId = await newConversation();
+    const conversationId = await newConversation("CUS-1001");
     const context: ToolContext = { supabase, conversationId };
 
     const seq = await currentTurnSeq(context);
@@ -82,7 +83,7 @@ describe("recorded-session replay through the real MCP tools", () => {
   it(
     "Scenario 5 (payout needing review): a review-required payout replays to escalate, once the agent actually escalates",
     async () => {
-      const conversationId = await newConversation();
+      const conversationId = await newConversation("CUS-1003");
       const context: ToolContext = { supabase, conversationId };
 
       // Turn 1: the lookup itself - PAY-7002 is CUS-1003's, under compliance review.

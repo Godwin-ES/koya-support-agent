@@ -35,7 +35,8 @@ function arg(name: string): string | undefined {
 }
 
 async function runScenario(supabase: SupabaseClient, runId: string, model: string, scenario: EvalScenario): Promise<ScenarioOutcome> {
-  const { data: conversation, error } = await supabase.from("conversations").insert({ channel: "web_text", model }).select("id").single();
+  // Bound to the scenario's signed-in customer the way agent-server binds a real one from the account.
+  const { data: conversation, error } = await supabase.from("conversations").insert({ channel: "web_text", model, verified_customer_id: scenario.customerId ?? null }).select("id").single();
   if (error) throw error;
   const conversationId = conversation.id as string;
   const token = issueConversationToken(CONVERSATION_TOKEN_SECRET!, conversationId);

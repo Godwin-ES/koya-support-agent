@@ -25,20 +25,22 @@
 // is by definition something a human needs to act on soon.
 import type { ToolContext } from "../context";
 import { isCategory } from "./categories";
+import { verifiedCustomerId } from "./verification";
 import { newEscalationMessage, sendDiscordAlert } from "../../notify/discord";
 
 export interface CreateEscalationInput {
   ticket_id?: string;
   customer_id?: string;
-  user_name: string;
-  user_email: string;
+  /** Optional for a signed-in customer - their account's own name and email are used. */
+  user_name?: string;
+  user_email?: string;
   category: string;
   reason: string;
   preferred_time?: string;
 }
 
 export type CreateEscalationResult =
-  | { refused: true; reason: "invalid_email" | "invalid_category" | "invalid_preferred_time"; hint?: string }
+  | { refused: true; reason: "missing_name" | "invalid_email" | "invalid_category" | "invalid_preferred_time"; hint?: string }
   | { escalation_id: string; status: "open"; follow_up_summary: string };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -61,7 +63,20 @@ async function existingOpenEscalation(context: ToolContext): Promise<{ id: strin
   return data;
 }
 
-export async function createEscalation(context: ToolContext, input: CreateEscalationInput): Promise<CreateEscalationResult> {
+export async function createEscalation(context: ToolContext, rawInput: CreateEscalationInput): Promise<CreateEscalationResult> {
+  // The customer is always the conversation's own (verification.ts), never
+  // one the model names; a signed-in customer's name and email come from
+  // their account when the model leaves them out.
+  const customerId = await verifiedCustomerId(context);
+  const account = customerId ? await context.supabase.from("customers").select("contact_name, contact_email").eq("customer_id", customerId).single() : null;
+  if (account?.error) throw account.error;
+  const input = {
+    ...rawInput,
+    customer_id: customerId ?? undefined,
+    user_name: rawInput.user_name?.trim() || account?.data?.contact_name || "",
+    user_email: rawInput.user_email?.trim() || account?.data?.contact_email || "",
+  };
+  if (!input.user_name) return { refused: true, reason: "missing_name" };
   if (!EMAIL_RE.test(input.user_email)) return { refused: true, reason: "invalid_email" };
   if (!isCategory(input.category)) return { refused: true, reason: "invalid_category" };
   if (input.preferred_time !== undefined && Number.isNaN(Date.parse(input.preferred_time))) {

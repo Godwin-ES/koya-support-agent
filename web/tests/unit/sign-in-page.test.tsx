@@ -11,6 +11,7 @@ const mockDemoSignIn = vi.fn(async () => ({}));
 vi.mock("@/app/sign-in/actions", () => ({
   signIn: (...args: unknown[]) => mockSignIn(...args),
   demoSignIn: (...args: unknown[]) => mockDemoSignIn(...args),
+  sampleCustomerSignIn: vi.fn(async () => ({})),
 }));
 
 describe("sign-in page", () => {
@@ -31,6 +32,14 @@ describe("sign-in page", () => {
     expect(demoButton).toBeInTheDocument();
     await user.click(demoButton);
     expect(mockDemoSignIn).toHaveBeenCalled();
+  });
+
+  it("offers each of the five sample customers as a one-click sign-in", async () => {
+    const { default: SignInPage } = await import("@/app/sign-in/page");
+    render(<SignInPage />);
+    for (const name of ["Amara Okafor of LagosLedger", "Daniel Mwangi of NairobiOps", "Efua Mensah of AccraStack", "Amina Jacobs of CapeCloud", "Patrick Ndayisaba of KigaliWorks"]) {
+      expect(screen.getByRole("button", { name: `Sign in as ${name}` })).toBeInTheDocument();
+    }
   });
 
   it("offers no sign-up - access is by invitation only", async () => {
