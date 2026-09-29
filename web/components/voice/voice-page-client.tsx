@@ -32,7 +32,7 @@ export function VoicePageClient({ accessToken, onSignOut, userName = null, userE
   const [textMode, setTextMode] = useState(false);
   const [textDraft, setTextDraft] = useState<string | undefined>(undefined);
   const [hasStartedBefore, setHasStartedBefore] = useState(false);
-  const callLimit = useCallLimit(callState);
+  const callLimit = useCallLimit(accessToken, callState);
 
   const actions = deriveCallActions(callState);
   const isActive = callState === "listening" || callState === "agent_speaking";
