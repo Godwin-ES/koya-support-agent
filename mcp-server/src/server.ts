@@ -1,5 +1,7 @@
-// The seven MCP tools (SYSTEM-DESIGN.md §5, mcp-tool-requirements.md),
-// wired to the core business logic in @core/mcp and logged through
+// The eight current MCP tools: the seven required by the Week 6 PRD plus
+// list_account_activity, added after testing exposed the need for an account
+// overview without a specific transaction or payout reference.
+// Wired to the core business logic in @core/mcp and logged through
 // callWithLogging so no handler can skip the tool_calls record.
 //
 // No z.record anywhere in an input schema (week 5's regression: one field
@@ -117,7 +119,6 @@ export function createServer(context: ToolContext): McpServer {
       return { status: "refused" in result ? "refused" : "ok", result };
     })),
   );
-
   server.registerTool(
     "create_escalation",
     {
