@@ -13,9 +13,16 @@ export function isStaff(user: User | null): user is User {
   return user?.app_metadata?.is_staff === true;
 }
 
-/** The customer app is invite-only: an invited account, or staff. An account made through Supabase's public sign-up endpoint has neither. */
+/**
+ * The customer app is invite-only. Access comes from any of: the `invited`
+ * flag (scripts/invite-user.mjs), staff, or Supabase's own `invited_at` -
+ * stamped on every account created by an admin invite, including one sent
+ * from the Supabase dashboard. Public sign-up sets none of them, and none
+ * can be changed by the user. (A dashboard invite used to be refused at the
+ * password step, since only the script set the flag.)
+ */
 export function hasAppAccess(user: User | null): user is User {
-  return user?.app_metadata?.invited === true || isStaff(user);
+  return Boolean(user?.invited_at) || user?.app_metadata?.invited === true || isStaff(user);
 }
 
 export const NO_ACCESS_MESSAGE = "This account doesn't have access yet. Access is by invitation only.";

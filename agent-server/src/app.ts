@@ -106,7 +106,9 @@ export function createApp(deps: AppDeps) {
     const { data, error } = await supabase.auth.getUser(accessToken);
     if (error || !data.user) return null;
     const meta = data.user.app_metadata as { invited?: unknown; is_staff?: unknown; customer_id?: unknown } | undefined;
-    if (meta?.invited !== true && meta?.is_staff !== true) return null;
+    // The same rule as web/lib/auth.ts's hasAppAccess: the invite script's
+    // flag, staff, or Supabase's own invited_at from any admin invite.
+    if (meta?.invited !== true && meta?.is_staff !== true && !data.user.invited_at) return null;
     return { id: data.user.id, customerId: typeof meta?.customer_id === "string" ? meta.customer_id : null };
   }
 

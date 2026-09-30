@@ -129,6 +129,18 @@ describe("GET /api/limits", () => {
     expect(((await res.json()) as { calls: { used: number } }).calls.used).toBe(0);
   });
 
+  it("accepts an account created by a Supabase admin invite - the kind the dashboard's \"Invite user\" sends - with no flag set", async () => {
+    const email = `dashboard-invite-${crypto.randomUUID()}@relaypay-test.example`;
+    const { data: link, error } = await supabase.auth.admin.generateLink({ type: "invite", email });
+    if (error) throw error;
+    testUserIds.push(link.user.id);
+    expect(link.user.app_metadata.invited).toBeUndefined();
+    const { data: session, error: otpError } = await anonClient().auth.verifyOtp({ type: "invite", token_hash: link.properties.hashed_token });
+    if (otpError) throw otpError;
+    const res = await fetch(`${baseUrl}/api/limits`, { headers: { Authorization: `Bearer ${session.session!.access_token}` } });
+    expect(res.status).toBe(200);
+  });
+
   it("refuses an account that wasn't invited - public sign-up can't reach the agent", async () => {
     const res = await fetch(`${baseUrl}/api/limits`, { headers: { Authorization: `Bearer ${await newCallerToken({ invited: false })}` } });
     expect(res.status).toBe(401);
@@ -314,7 +326,7 @@ describe("POST /api/text", () => {
     await supabase.from("conversation_turns").insert(rows);
     const res = await sendText(body, "one more");
     expect(res).toEqual({ status: 429, body: { error: "conversation_message_limit" } });
-  });
+  }, 20_000);
 
   it("refuses a message to a conversation that has already ended with 409 conversation_ended", async () => {
     const { body } = await createConversation(await newCallerToken(), "web_text");

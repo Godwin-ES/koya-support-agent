@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isStaff } from "@/lib/auth";
+import { hasAppAccess, isStaff } from "@/lib/auth";
 import type { User } from "@supabase/supabase-js";
 
 function userWith(app_metadata: Record<string, unknown>): User {
@@ -22,5 +22,18 @@ describe("isStaff", () => {
 
   it("is true only when app_metadata.is_staff is exactly true", () => {
     expect(isStaff(userWith({ is_staff: true }))).toBe(true);
+  });
+});
+
+describe("hasAppAccess", () => {
+  it("is true for the invite script's flag, staff, or any Supabase admin invite (including one sent from the dashboard)", () => {
+    expect(hasAppAccess(userWith({ invited: true }))).toBe(true);
+    expect(hasAppAccess(userWith({ is_staff: true }))).toBe(true);
+    expect(hasAppAccess({ app_metadata: {}, invited_at: "2026-09-30T12:00:00Z" } as User)).toBe(true);
+  });
+
+  it("is false for an account made through public sign-up, which has none of them", () => {
+    expect(hasAppAccess(userWith({ provider: "email" }))).toBe(false);
+    expect(hasAppAccess(null)).toBe(false);
   });
 });
