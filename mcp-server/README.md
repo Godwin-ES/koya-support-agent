@@ -6,9 +6,9 @@ All tools connect the support agent to the RelayPay seed data and support tables
 
 ## Running it
 
-Needs `.env.local` at the repo root (`week-6/app/.env.local`) with
-`NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, and the seed data
-loaded (`pnpm seed` from the repo root).
+Create `.env.local` at the repository root with `NEXT_PUBLIC_SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY` and the other required values shown in
+`.env.example`. Load the seed data first with `pnpm seed` from the repo root.
 
 **As an HTTP server** (what `agent-server` talks to):
 
