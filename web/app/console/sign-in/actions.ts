@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { supabaseServerClient } from "@/lib/supabase/server";
+import { isStaff } from "@/lib/auth";
 
 export interface SignInResult {
   error?: string;
@@ -14,8 +15,14 @@ export async function signIn(_prev: SignInResult, formData: FormData): Promise<S
   if (!email || !password) return { error: "Enter your email and password." };
 
   const supabase = await supabaseServerClient();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: "Incorrect email or password." };
+  // A customer account's password is right, but the console would only
+  // bounce it straight back here - which looked like the button did nothing.
+  if (!isStaff(data.user)) {
+    await supabase.auth.signOut();
+    return { error: "This account doesn't have console access - it's a customer account. Customers sign in at the main app." };
+  }
 
   redirect("/console");
 }
