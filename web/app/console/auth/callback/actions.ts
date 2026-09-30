@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { supabaseServerClient } from "@/lib/supabase/server";
+import { supabaseConsoleClient } from "@/lib/supabase/server";
 
 /**
  * Establishes the session an invite link's tokens describe, server-side -
@@ -12,7 +12,7 @@ import { supabaseServerClient } from "@/lib/supabase/server";
  * invite, and lands here - the one redirect URL Supabase already allows.
  */
 export async function completeInvite(accessToken: string, refreshToken: string): Promise<void> {
-  const supabase = await supabaseServerClient();
+  const supabase = await supabaseConsoleClient();
   const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
   redirect(error ? "/sign-in" : "/console/auth/set-password");
 }

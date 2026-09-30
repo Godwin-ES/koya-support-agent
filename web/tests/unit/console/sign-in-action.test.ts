@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const signInWithPassword = vi.fn();
 const signOut = vi.fn(async () => ({ error: null }));
-vi.mock("@/lib/supabase/server", () => ({ supabaseServerClient: async () => ({ auth: { signInWithPassword, signOut } }) }));
+vi.mock("@/lib/supabase/server", () => ({ supabaseConsoleClient: async () => ({ auth: { signInWithPassword, signOut } }) }));
 const redirect = vi.fn((path: string) => {
   throw new Error(`redirect:${path}`);
 });

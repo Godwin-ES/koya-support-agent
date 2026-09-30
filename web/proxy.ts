@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { hasAppAccess, isStaff } from "@/lib/auth";
+import { CONSOLE_AUTH_COOKIE } from "@/lib/supabase/cookie-names";
 
 /**
  * Two gates behind the same Supabase Auth session check: `/console`
@@ -19,8 +20,13 @@ import { hasAppAccess, isStaff } from "@/lib/auth";
  */
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
+  const { pathname } = request.nextUrl;
 
+  // Console pages use the console's own session cookie; everything else the
+  // customer app's (lib/supabase/server.ts - they're kept apart on purpose).
+  const isConsolePath = pathname.startsWith("/console");
   const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+    ...(isConsolePath ? { cookieOptions: { name: CONSOLE_AUTH_COOKIE } } : {}),
     cookies: {
       getAll: () => request.cookies.getAll(),
       setAll: (cookiesToSet) => {
@@ -34,8 +40,6 @@ export async function proxy(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
-  const { pathname } = request.nextUrl;
 
   // The invite-completion flow arrives with no session cookie yet - that's
   // exactly what it establishes, so it can't be behind this same gate.

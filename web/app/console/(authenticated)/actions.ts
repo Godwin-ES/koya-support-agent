@@ -2,11 +2,11 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { supabaseServerClient } from "@/lib/supabase/server";
+import { supabaseConsoleClient } from "@/lib/supabase/server";
 import { updateCaseStatus as updateCaseStatusData, type UpdateCaseResult } from "@/lib/server/console-data";
 
 export async function signOut(): Promise<void> {
-  const supabase = await supabaseServerClient();
+  const supabase = await supabaseConsoleClient();
   await supabase.auth.signOut();
   redirect("/console/sign-in");
 }

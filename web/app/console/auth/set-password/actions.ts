@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { supabaseServerClient } from "@/lib/supabase/server";
+import { supabaseConsoleClient } from "@/lib/supabase/server";
 import { isStaff } from "@/lib/auth";
 
 export interface SetPasswordResult {
@@ -21,7 +21,7 @@ export async function setPassword(_prev: SetPasswordResult, formData: FormData):
   if (!firstName || !lastName) return { error: "Enter your first and last name." };
   if (password.length < 8) return { error: "Use at least 8 characters for your password." };
 
-  const supabase = await supabaseServerClient();
+  const supabase = await supabaseConsoleClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

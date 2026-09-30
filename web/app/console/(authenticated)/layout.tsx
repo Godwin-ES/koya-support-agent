@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { supabaseServerClient } from "@/lib/supabase/server";
+import { supabaseConsoleClient } from "@/lib/supabase/server";
 import { isStaff } from "@/lib/auth";
 import { Wordmark } from "@/components/brand/wordmark";
 import { ConsoleNav } from "@/components/console/console-nav";
@@ -9,7 +9,7 @@ import { signOut } from "./actions";
 
 /** "A left sidebar (Overview, Conversations, Queue, Evaluations), a top bar with breadcrumb and user menu" (SYSTEM-DESIGN.md §11.2). */
 export default async function ConsoleLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await supabaseServerClient();
+  const supabase = await supabaseConsoleClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { supabaseServerClient } from "@/lib/supabase/server";
+import { supabaseConsoleClient } from "@/lib/supabase/server";
 import { isStaff } from "@/lib/auth";
 
 export interface SignInResult {
@@ -14,7 +14,7 @@ export async function signIn(_prev: SignInResult, formData: FormData): Promise<S
   const password = String(formData.get("password") ?? "");
   if (!email || !password) return { error: "Enter your email and password." };
 
-  const supabase = await supabaseServerClient();
+  const supabase = await supabaseConsoleClient();
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: "Incorrect email or password." };
   // A customer account's password is right, but the console would only
