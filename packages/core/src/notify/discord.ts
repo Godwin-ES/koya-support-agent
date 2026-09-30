@@ -7,6 +7,8 @@
 // a link to the console, where staff read the rest. Sending never throws (a
 // failed notification must never break a call) and is a no-op when that
 // channel's webhook isn't set (tests, local dev without one).
+import { formatDateTime } from "../domain/format-time";
+
 const COLOR = { info: 0x1565c0, success: 0x1f7a4d, warning: 0xf9a825, danger: 0xc62828, neutral: 0x5b6472 } as const;
 
 export type DiscordChannel = "alerts" | "activity";
@@ -102,8 +104,7 @@ export function formatUsd(amount: number): string {
 }
 
 function formatWhen(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+  return Number.isNaN(new Date(iso).getTime()) ? iso : formatDateTime(iso);
 }
 
 // ---------------------------------------------------------------------

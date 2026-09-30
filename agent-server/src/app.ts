@@ -29,6 +29,7 @@ import {
   SSE_DONE,
   verifyConversationToken,
   type Channel,
+  type ConversationSummarizer,
 } from "@core/agent";
 import { currentTurnSeq } from "@core/mcp";
 import { caseReference } from "@core/domain/case-reference";
@@ -46,6 +47,8 @@ export interface AppDeps {
   model: string;
   /** Busy, limit and spend notifications. Tests may omit it (a no-threshold notifier is used). */
   ops?: OpsNotifier;
+  /** Writes each finished conversation's natural summary. Tests omit it (the built summary is used). */
+  summarize?: ConversationSummarizer;
 }
 
 export function createApp(deps: AppDeps) {
@@ -333,8 +336,10 @@ export function createApp(deps: AppDeps) {
     }
 
     sessionManager.close(body.conversation_id);
+    // Marked ended before replying (so no later message slips in); the
+    // summary, cost and notification follow without keeping the customer waiting.
     try {
-      await finalizeConversation(supabase, body.conversation_id, { endedReason: "caller_ended", finalStatus: "completed" });
+      await finalizeConversation(supabase, body.conversation_id, { endedReason: "caller_ended", finalStatus: "completed", summarize: deps.summarize, inBackground: true });
     } catch (err) {
       console.error("finalizing text conversation failed:", err);
     }
@@ -359,11 +364,15 @@ export function createApp(deps: AppDeps) {
       if (event.type === "end-of-call-report") {
         sessionManager.close(event.conversationId);
         // Idempotent per call: a resend after the conversation already ended is a no-op (SYSTEM-DESIGN.md §10).
+        // Marked ended before Vapi gets its 200; the summary (a second or two) follows in the background.
         await finalizeConversation(supabase, event.conversationId, {
           endedReason: event.endedReason,
           finalStatus: event.endedReason.includes("error") ? "error" : "completed",
           vapiSummary: event.summary,
           vapiCallId: event.callId,
+          voiceLatency: event.latency,
+          summarize: deps.summarize,
+          inBackground: true,
         });
       } else if (event.type === "hang") {
         await supabase.from("conversation_events").insert({ conversation_id: event.conversationId, event_type: "vapi_hang", summary: "Vapi reported a hang (delayed or unresponsive assistant)." });

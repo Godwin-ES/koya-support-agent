@@ -3,7 +3,39 @@ import Link from "next/link";
 import { ANSWER_PATH, TOOL_CALL_STATUS } from "@core/domain/status";
 import { getConversationDetail } from "@/lib/server/console-data";
 import { StatusBadge } from "@/components/primitives/status-badge";
+import { OutcomePill, channelLabel } from "@/components/console/outcome-pill";
+import { formatDateTime, formatDuration } from "@core/domain/format-time";
 import { DegradedState, EmptyState } from "@/components/primitives/async-state";
+import type { VoiceLatency } from "@core/agent/vapi";
+
+const seconds = (value: number | null) => (value === null ? "—" : `${(value / 1000).toFixed(1)}s`);
+
+/** Where a voice turn's wait goes, from Vapi's end-of-call report: hearing the caller finish, the model's first words, then speech. */
+function VoiceLatencyRow({ latency }: { latency: VoiceLatency }) {
+  const parts: Array<[string, number | null]> = [
+    ["Response time", latency.turn_ms],
+    ["Hearing them finish", latency.endpointing_ms],
+    ["Agent's first words", latency.model_ms],
+    ["Speech", latency.voice_ms],
+  ];
+  return (
+    <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+      <p className="text-xs font-medium text-[var(--color-text-muted)]">Voice latency · average per turn, from Vapi</p>
+      <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-5">
+        {parts.map(([label, value]) => (
+          <div key={label}>
+            <dt className="text-xs text-[var(--color-text-muted)]">{label}</dt>
+            <dd className="mt-0.5 font-medium tabular-nums text-[var(--color-text)]">{seconds(value)}</dd>
+          </div>
+        ))}
+        <div>
+          <dt className="text-xs text-[var(--color-text-muted)]">Caller interrupted</dt>
+          <dd className="mt-0.5 font-medium tabular-nums text-[var(--color-text)]">{latency.caller_interrupted_agent ?? "—"}</dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
 
 /** "The centrepiece of the demo" (SYSTEM-DESIGN.md §11.8): header, then the turn timeline. */
 export default async function ConversationDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -16,7 +48,14 @@ export default async function ConversationDetailPage({ params }: { params: Promi
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-lg font-semibold text-[var(--color-text)]">Conversation</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-lg font-semibold text-[var(--color-text)]">{conversation.person?.name ?? "Evaluation run"}</h1>
+          <OutcomePill outcome={conversation.outcome} />
+        </div>
+        <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+          {channelLabel(conversation.channel)} · {formatDateTime(conversation.started_at)}
+          {durationSeconds !== null ? ` · ${formatDuration(durationSeconds)}` : ""}
+        </p>
         <div className="mt-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[var(--shadow-sm)]">
           <div className="mb-4 border-b border-[var(--color-border)] pb-4">
             <p className="text-xs font-medium text-[var(--color-text-muted)]">Summary</p>
@@ -24,46 +63,32 @@ export default async function ConversationDetailPage({ params }: { params: Promi
           </div>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-4">
             <div>
-              <dt className="text-xs text-[var(--color-text-muted)]">Channel</dt>
-              <dd className="mt-0.5 font-medium text-[var(--color-text)]">{conversation.channel}</dd>
+              <dt className="text-xs text-[var(--color-text-muted)]">Customer</dt>
+              <dd className="mt-0.5 font-medium text-[var(--color-text)]">
+                {conversation.person?.name ?? "—"}
+                {conversation.person?.detail && <span className="block text-xs font-normal text-[var(--color-text-muted)]">{conversation.person.detail}</span>}
+              </dd>
             </div>
             <div>
-              <dt className="text-xs text-[var(--color-text-muted)]">Started</dt>
-              <dd className="mt-0.5 font-medium text-[var(--color-text)]">{new Date(conversation.started_at).toLocaleString()}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-[var(--color-text-muted)]">Duration</dt>
-              <dd className="mt-0.5 font-medium text-[var(--color-text)]">{durationSeconds !== null ? `${durationSeconds}s` : "In progress"}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-[var(--color-text-muted)]">Final status</dt>
-              <dd className="mt-0.5 font-medium text-[var(--color-text)]">{conversation.final_status ?? "—"}</dd>
+              <dt className="text-xs text-[var(--color-text-muted)]">Turns</dt>
+              <dd className="mt-0.5 font-medium text-[var(--color-text)]">{conversation.turns.length}</dd>
             </div>
             <div>
               <dt className="text-xs text-[var(--color-text-muted)]">Model</dt>
               <dd className="mt-0.5 font-medium text-[var(--color-text)]">{conversation.model ?? "—"}</dd>
             </div>
             <div>
-              <dt className="text-xs text-[var(--color-text-muted)]">Cost</dt>
+              <dt className="text-xs text-[var(--color-text-muted)]">Claude cost</dt>
               <dd className="mt-0.5 font-medium text-[var(--color-text)]">${conversation.cost_usd.toFixed(4)}</dd>
             </div>
-            <div>
-              <dt className="text-xs text-[var(--color-text-muted)]">Verified customer</dt>
-              <dd className="mt-0.5 font-medium text-[var(--color-text)]">{conversation.verified_customer_company_name ?? "Not verified"}</dd>
-            </div>
           </dl>
-          {(conversation.ticket || conversation.escalation) && (
-            <div className="mt-4 flex gap-4 border-t border-[var(--color-border)] pt-4">
-              {conversation.ticket && (
-                <Link href={`/console/queue?case=${conversation.ticket.id}`} className="text-sm font-medium text-[var(--color-accent)] hover:underline">
-                  Ticket ({conversation.ticket.status}) →
-                </Link>
-              )}
-              {conversation.escalation && (
-                <Link href={`/console/queue?case=${conversation.escalation.id}`} className="text-sm font-medium text-[var(--color-accent)] hover:underline">
-                  Escalation ({conversation.escalation.status}) →
-                </Link>
-              )}
+          {conversation.voice_latency && <VoiceLatencyRow latency={conversation.voice_latency} />}
+          {(conversation.escalation || conversation.ticket) && (
+            <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+              {/* An escalation and its linked ticket are one case in the queue. */}
+              <Link href={`/console/queue?case=${(conversation.escalation ?? conversation.ticket)!.id}`} className="text-sm font-medium text-[var(--color-accent)] hover:underline">
+                {conversation.escalation ? `Open the ${conversation.escalation.category} escalation (${conversation.escalation.status.replace("_", " ")})` : `Open the ${conversation.ticket!.category} ticket (${conversation.ticket!.status.replace("_", " ")})`} →
+              </Link>
             </div>
           )}
         </div>

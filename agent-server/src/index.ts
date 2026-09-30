@@ -6,6 +6,8 @@ import { config } from "dotenv";
 config({ path: "../.env.local", quiet: true });
 
 import { createClient } from "@supabase/supabase-js";
+import Anthropic from "@anthropic-ai/sdk";
+import { writeConversationSummary, type ConversationSummarizer } from "@core/agent";
 import { createApp } from "./app";
 import { sweepStaleConversations } from "./lifecycle";
 import { OpsNotifier } from "./ops";
@@ -36,12 +38,14 @@ setInterval(() => {
 // Claude spend (UTC day) that triggers one #alerts message. 0 turns it off.
 const DAILY_SPEND_ALERT_USD = Number(process.env.DAILY_SPEND_ALERT_USD ?? 2);
 const ops = new OpsNotifier(supabase, DAILY_SPEND_ALERT_USD);
+const anthropic = new Anthropic();
+const summarize: ConversationSummarizer = (conversation) => writeConversationSummary(anthropic, conversation);
 
 // Once a minute: close conversations that will never send an end signal
 // (lifecycle.ts), then the spend threshold and the daily digest (ops.ts).
 // Each step is independent - one failing doesn't skip the others.
 async function minuteSweep(): Promise<void> {
-  const closed = await sweepStaleConversations(supabase).catch((err) => {
+  const closed = await sweepStaleConversations(supabase, new Date(), summarize).catch((err) => {
     console.error("stale-conversation sweep failed:", err);
     return [] as string[];
   });
@@ -59,6 +63,7 @@ const app = createApp({
   vapiServerSecret: process.env.VAPI_SERVER_SECRET,
   model: MODEL,
   ops,
+  summarize,
 });
 
 app.listen(PORT, () => {

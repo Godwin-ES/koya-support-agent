@@ -35,7 +35,16 @@ async function signIn(page: import("@playwright/test").Page) {
   await page.waitForURL("**/console");
 }
 
+// This test writes to the shared project, so an interrupted run can leave its
+// fixture behind - clear any older than a few minutes (a parallel worker's
+// fresh one is left alone) before seeding, so none ever lingers in the console.
+async function clearStaleFixtures(): Promise<void> {
+  const cutoff = new Date(Date.now() - 10 * 60_000).toISOString();
+  await admin.from("conversations").delete().eq("caller_ref", "e2e-console-customer").lt("started_at", cutoff);
+}
+
 async function seedTicket(): Promise<{ conversationId: string; ticketId: string; updatedAt: string }> {
+  await clearStaleFixtures();
   const { data: conversation, error: convError } = await admin.from("conversations").insert({ channel: "web_text", caller_ref: "e2e-console-customer" }).select("id").single(); // a customer's conversation - the queue shows customers by default, evaluation runs (no account) on their own tab
   if (convError) throw convError;
   const { data: ticket, error: ticketError } = await admin.from("support_tickets").insert({ conversation_id: conversation.id, category: "payment", priority: "medium", summary: "e2e test ticket" }).select("id, updated_at").single();

@@ -107,7 +107,7 @@ describe("notification routing and content", () => {
 
   it("an escalation says when the callback is, or that there isn't one", () => {
     const withTime = toDiscordPayload(newEscalationMessage({ conversationId: "c", category: "dispute", callbackTime: "2026-10-01T09:00:00Z" }));
-    expect(JSON.stringify(withTime)).toContain("2026-10-01 09:00 UTC");
+    expect(JSON.stringify(withTime)).toContain("Thu 1 Oct, 10:00 WAT");
     const without = toDiscordPayload(newEscalationMessage({ conversationId: "c", category: "dispute" }));
     expect(JSON.stringify(without)).toContain("Not requested");
   });

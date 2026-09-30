@@ -1,5 +1,7 @@
+import type { VoiceLatency } from "@core/agent/vapi";
 import "server-only";
 import { supabaseAdminClient } from "@/lib/supabase/admin";
+import { watDay } from "@core/domain/format-time";
 
 // The console's own read/write layer (SYSTEM-DESIGN.md §11.8) - every
 // function here runs only on the server, through the service-role client,
@@ -11,9 +13,9 @@ export interface OverviewData {
   latestEvaluationRunId: string | null;
 }
 
-function startOfTodayUtc(): string {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+/** Midnight at the start of today in WAT - the day the console's "today" means. */
+function startOfTodayWat(): string {
+  return new Date(`${watDay(new Date())}T00:00:00+01:00`).toISOString();
 }
 
 /**
@@ -31,11 +33,56 @@ export function parseSource(value: string | undefined): ConversationSource {
 export async function getOverview(): Promise<OverviewData> {
   const supabase = supabaseAdminClient();
   const [{ count: todaysConversationCount }, { count: openEscalationCount }, { data: latestEvaluation }] = await Promise.all([
-    supabase.from("conversations").select("*", { count: "exact", head: true }).not("caller_ref", "is", null).gte("started_at", startOfTodayUtc()),
+    supabase.from("conversations").select("*", { count: "exact", head: true }).not("caller_ref", "is", null).gte("started_at", startOfTodayWat()),
     supabase.from("escalations").select("id, conversations!inner(caller_ref)", { count: "exact", head: true }).not("conversations.caller_ref", "is", null).eq("status", "open"),
     supabase.from("evaluations").select("run_id").order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
   return { todaysConversationCount: todaysConversationCount ?? 0, openEscalationCount: openEscalationCount ?? 0, latestEvaluationRunId: latestEvaluation?.run_id ?? null };
+}
+
+/** Who a conversation or case belongs to, as a support agent would want to read it. */
+export interface Person {
+  name: string;
+  /** The company for a customer; "Staff" for a team member. */
+  detail: string | null;
+}
+
+interface Directory {
+  byAccount: Map<string, { name: string | null; email: string | null; staff: boolean }>;
+  byCustomer: Map<string, { contact_name: string; company_name: string }>;
+}
+
+async function loadDirectory(): Promise<Directory> {
+  const supabase = supabaseAdminClient();
+  const [{ data: users }, { data: customers }] = await Promise.all([supabase.auth.admin.listUsers({ perPage: 1000 }), supabase.from("customers").select("customer_id, contact_name, company_name")]);
+  const byAccount = new Map<string, { name: string | null; email: string | null; staff: boolean }>();
+  for (const u of users?.users ?? []) {
+    const name = typeof u.user_metadata?.name === "string" && u.user_metadata.name.trim() ? u.user_metadata.name.trim() : null;
+    byAccount.set(u.id, { name, email: u.email ?? null, staff: u.app_metadata?.is_staff === true || Boolean(u.invited_at) });
+  }
+  const byCustomer = new Map((customers ?? []).map((c) => [c.customer_id as string, { contact_name: c.contact_name as string, company_name: c.company_name as string }]));
+  return { byAccount, byCustomer };
+}
+
+function personFor(directory: Directory, callerRef: string | null, customerId: string | null): Person | null {
+  const customer = customerId ? directory.byCustomer.get(customerId) : undefined;
+  if (customer) return { name: customer.contact_name, detail: customer.company_name };
+  const account = callerRef ? directory.byAccount.get(callerRef) : undefined;
+  if (account) return { name: account.name ?? account.email ?? "Unknown account", detail: account.staff ? "Staff" : null };
+  return null;
+}
+
+/** How a conversation ended, in a support agent's words. */
+export type ConversationOutcome = "in_progress" | "escalated" | "ticket" | "resolved" | "abandoned" | "error" | "no_messages";
+
+export function outcomeOf(c: { endedAt: string | null; finalStatus: string | null; escalated: boolean; ticketed: boolean; turns: number }): ConversationOutcome {
+  if (!c.endedAt) return "in_progress";
+  if (c.finalStatus === "error") return "error";
+  if (c.escalated) return "escalated";
+  if (c.ticketed) return "ticket";
+  if (c.turns === 0) return "no_messages";
+  if (c.finalStatus === "abandoned") return "abandoned";
+  return "resolved";
 }
 
 export interface ConversationListItem {
@@ -43,11 +90,11 @@ export interface ConversationListItem {
   channel: string;
   started_at: string;
   ended_at: string | null;
-  final_status: string | null;
-  cost_usd: number;
-  answer_types: string[];
+  person: Person | null;
+  opener: string | null;
+  turns: number;
+  outcome: ConversationOutcome;
   escalated: boolean;
-  ticketed: boolean;
 }
 
 export interface ConversationListFilters {
@@ -59,25 +106,31 @@ export interface ConversationListFilters {
 
 export async function listConversations(filters: ConversationListFilters = {}): Promise<ConversationListItem[]> {
   const supabase = supabaseAdminClient();
-  let query = supabase.from("conversations").select("id, channel, started_at, ended_at, final_status, summary, cost_usd, conversation_turns(answer_type), escalations(id), support_tickets(id)").order("started_at", { ascending: false }).limit(200);
+  let query = supabase.from("conversations").select("id, channel, caller_ref, verified_customer_id, started_at, ended_at, final_status, summary, conversation_turns(seq, user_transcript), escalations(id), support_tickets(id)").order("started_at", { ascending: false }).limit(200);
   if (filters.channel) query = query.eq("channel", filters.channel);
   query = (filters.source ?? "customers") === "customers" ? query.not("caller_ref", "is", null) : query.is("caller_ref", null);
   if (filters.search) query = query.ilike("summary", `%${filters.search}%`);
 
-  const { data, error } = await query;
+  const [{ data, error }, directory] = await Promise.all([query, loadDirectory()]);
   if (error) throw error;
 
-  const rows = (data ?? []).map((row) => ({
-    id: row.id as string,
-    channel: row.channel as string,
-    started_at: row.started_at as string,
-    ended_at: row.ended_at as string | null,
-    final_status: row.final_status as string | null,
-    cost_usd: Number(row.cost_usd ?? 0),
-    answer_types: [...new Set((row.conversation_turns as Array<{ answer_type: string }>).map((t) => t.answer_type))],
-    escalated: (row.escalations as unknown[]).length > 0,
-    ticketed: (row.support_tickets as unknown[]).length > 0,
-  }));
+  const rows: ConversationListItem[] = (data ?? []).map((row) => {
+    const turns = [...(row.conversation_turns as Array<{ seq: number; user_transcript: string }>)].sort((a, b) => a.seq - b.seq);
+    const escalated = (row.escalations as unknown[]).length > 0;
+    const ticketed = (row.support_tickets as unknown[]).length > 0;
+    const outcome = outcomeOf({ endedAt: row.ended_at as string | null, finalStatus: row.final_status as string | null, escalated, ticketed, turns: turns.length });
+    return {
+      id: row.id as string,
+      channel: row.channel as string,
+      started_at: row.started_at as string,
+      ended_at: row.ended_at as string | null,
+      person: personFor(directory, row.caller_ref as string | null, row.verified_customer_id as string | null),
+      opener: turns[0]?.user_transcript ?? null,
+      turns: turns.length,
+      outcome,
+      escalated,
+    };
+  });
 
   return filters.escalated === undefined ? rows : rows.filter((r) => r.escalated === filters.escalated);
 }
@@ -109,6 +162,10 @@ export interface ConversationDetail {
   cost_usd: number;
   /** Written when the conversation ends (agent-server lifecycle.ts); null while it's still open. */
   summary: string | null;
+  /** Vapi's latency averages for a voice call (migration 017); null for chats. */
+  voice_latency: VoiceLatency | null;
+  person: Person | null;
+  outcome: ConversationOutcome;
   verified_customer_company_name: string | null;
   turns: ConversationTurnDetail[];
   ticket: { id: string; category: string; status: string } | null;
@@ -117,7 +174,7 @@ export interface ConversationDetail {
 
 export async function getConversationDetail(id: string): Promise<ConversationDetail | null> {
   const supabase = supabaseAdminClient();
-  const { data: conversation, error } = await supabase.from("conversations").select("id, channel, started_at, ended_at, final_status, ended_reason, model, cost_usd, summary, verified_customer_id").eq("id", id).maybeSingle();
+  const { data: conversation, error } = await supabase.from("conversations").select("id, channel, caller_ref, started_at, ended_at, final_status, ended_reason, model, cost_usd, summary, voice_latency, verified_customer_id").eq("id", id).maybeSingle();
   if (error) throw error;
   if (!conversation) return null;
 
@@ -159,8 +216,11 @@ export async function getConversationDetail(id: string): Promise<ConversationDet
     final_status: conversation.final_status as string | null,
     ended_reason: conversation.ended_reason as string | null,
     model: conversation.model as string | null,
+    voice_latency: conversation.voice_latency as VoiceLatency | null,
     cost_usd: Number(conversation.cost_usd ?? 0),
     summary: (conversation.summary as string | null) ?? null,
+    person: personFor(await loadDirectory(), conversation.caller_ref as string | null, conversation.verified_customer_id as string | null),
+    outcome: outcomeOf({ endedAt: conversation.ended_at as string | null, finalStatus: conversation.final_status as string | null, escalated: Boolean(escalation), ticketed: Boolean(ticket), turns: turnsWithDetail.length }),
     verified_customer_company_name: (customer as { company_name?: string } | null)?.company_name ?? null,
     turns: turnsWithDetail,
     ticket: ticket ? { id: ticket.id as string, category: ticket.category as string, status: ticket.status as string } : null,
@@ -168,14 +228,17 @@ export async function getConversationDetail(id: string): Promise<ConversationDet
   };
 }
 
+export type CasePriority = "urgent" | "high" | "medium" | "low";
+
 export interface CaseItem {
   kind: "ticket" | "escalation";
   id: string;
   conversation_id: string;
   category: string;
   status: "open" | "in_progress" | "closed";
+  priority: CasePriority;
   summary: string;
-  customer_id: string | null;
+  person: Person | null;
   callback_time: string | null;
   created_at: string;
   updated_at: string;
@@ -192,46 +255,110 @@ function bySource<Q extends { not: (column: string, operator: string, value: nul
   return source === "customers" ? query.not("conversations.caller_ref", "is", null) : query.is("conversations.caller_ref", null);
 }
 
+const PRIORITY_RANK: Record<CasePriority, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+
+/**
+ * Open and in-progress cases first - most urgent, then oldest (first in,
+ * first served) - then closed ones, most recently closed first.
+ */
+export function compareCases(a: CaseItem, b: CaseItem): number {
+  const aClosed = a.status === "closed" ? 1 : 0;
+  const bClosed = b.status === "closed" ? 1 : 0;
+  if (aClosed !== bClosed) return aClosed - bClosed;
+  if (aClosed) return b.updated_at.localeCompare(a.updated_at);
+  return PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.created_at.localeCompare(b.created_at);
+}
+
+/**
+ * Tickets and escalations as one list of cases. Every escalation creates a
+ * linked ticket (create-escalation.ts), which is the same case - so a ticket
+ * that belongs to an escalation isn't listed on its own (it used to appear
+ * as a second row with the same text).
+ */
 export async function listCases(filters: CaseListFilters = {}): Promise<CaseItem[]> {
   const supabase = supabaseAdminClient();
-  const wantTickets = !filters.kind || filters.kind === "ticket";
-  const wantEscalations = !filters.kind || filters.kind === "escalation";
   const source = filters.source ?? "customers";
-
-  const [ticketsResult, escalationsResult] = await Promise.all([
-    wantTickets ? bySource(supabase.from("support_tickets").select("id, conversation_id, category, status, summary, customer_id, created_at, updated_at, conversations!inner(caller_ref)"), source).order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
-    wantEscalations ? bySource(supabase.from("escalations").select("id, conversation_id, category, status, reason, customer_id, callback_time, created_at, updated_at, conversations!inner(caller_ref)"), source).order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
+  const [ticketsResult, escalationsResult, directory] = await Promise.all([
+    bySource(supabase.from("support_tickets").select("id, conversation_id, category, status, priority, summary, customer_id, created_at, updated_at, conversations!inner(caller_ref)"), source),
+    bySource(supabase.from("escalations").select("id, ticket_id, conversation_id, category, status, reason, customer_id, callback_time, created_at, updated_at, conversations!inner(caller_ref)"), source),
+    loadDirectory(),
   ]);
   if (ticketsResult.error) throw ticketsResult.error;
   if (escalationsResult.error) throw escalationsResult.error;
 
-  const tickets: CaseItem[] = (ticketsResult.data ?? []).map((t) => ({
-    kind: "ticket",
-    id: t.id as string,
-    conversation_id: t.conversation_id as string,
-    category: t.category as string,
-    status: t.status as CaseItem["status"],
-    summary: t.summary as string,
-    customer_id: t.customer_id as string | null,
-    callback_time: null,
-    created_at: t.created_at as string,
-    updated_at: t.updated_at as string,
-  }));
-  const escalations: CaseItem[] = (escalationsResult.data ?? []).map((e) => ({
+  const escalationRows = escalationsResult.data ?? [];
+  const linkedTicketIds = new Set(escalationRows.map((e) => e.ticket_id as string | null).filter(Boolean));
+  const callerOf = (row: { conversations: unknown }) => (row.conversations as { caller_ref: string | null } | null)?.caller_ref ?? null;
+
+  const tickets: CaseItem[] = (ticketsResult.data ?? [])
+    .filter((t) => !linkedTicketIds.has(t.id as string))
+    .map((t) => ({
+      kind: "ticket",
+      id: t.id as string,
+      conversation_id: t.conversation_id as string,
+      category: t.category as string,
+      status: t.status as CaseItem["status"],
+      priority: t.priority as CasePriority,
+      summary: t.summary as string,
+      person: personFor(directory, callerOf(t), t.customer_id as string | null),
+      callback_time: null,
+      created_at: t.created_at as string,
+      updated_at: t.updated_at as string,
+    }));
+  const escalations: CaseItem[] = escalationRows.map((e) => ({
     kind: "escalation",
     id: e.id as string,
     conversation_id: e.conversation_id as string,
     category: e.category as string,
     status: e.status as CaseItem["status"],
+    priority: "high",
     summary: e.reason as string,
-    customer_id: e.customer_id as string | null,
+    person: personFor(directory, callerOf(e), e.customer_id as string | null),
     callback_time: e.callback_time as string | null,
     created_at: e.created_at as string,
     updated_at: e.updated_at as string,
   }));
 
-  const all = [...tickets, ...escalations].sort((a, b) => b.created_at.localeCompare(a.created_at));
-  return filters.status ? all.filter((c) => c.status === filters.status) : all;
+  let all = [...tickets, ...escalations];
+  if (filters.kind) all = all.filter((c) => c.kind === filters.kind);
+  if (filters.status) all = all.filter((c) => c.status === filters.status);
+  return all.sort(compareCases);
+}
+
+export interface CallbackDue {
+  escalationId: string;
+  conversationId: string;
+  person: Person | null;
+  category: string;
+  callbackTime: string;
+  overdue: boolean;
+}
+
+/** Escalations with a booked callback today (WAT) or earlier and still not closed - what a support team acts on first. */
+export async function listCallbacksDue(now: Date = new Date()): Promise<CallbackDue[]> {
+  const supabase = supabaseAdminClient();
+  const today = watDay(now);
+  const endOfToday = new Date(`${today}T23:59:59+01:00`).toISOString();
+  const [{ data, error }, directory] = await Promise.all([
+    supabase
+      .from("escalations")
+      .select("id, conversation_id, category, status, customer_id, callback_time, conversations!inner(caller_ref)")
+      .not("conversations.caller_ref", "is", null)
+      .neq("status", "closed")
+      .not("callback_time", "is", null)
+      .lte("callback_time", endOfToday)
+      .order("callback_time"),
+    loadDirectory(),
+  ]);
+  if (error) throw error;
+  return (data ?? []).map((e) => ({
+    escalationId: e.id as string,
+    conversationId: e.conversation_id as string,
+    person: personFor(directory, (e.conversations as unknown as { caller_ref: string | null } | null)?.caller_ref ?? null, e.customer_id as string | null),
+    category: e.category as string,
+    callbackTime: e.callback_time as string,
+    overdue: watDay(e.callback_time as string) < today,
+  }));
 }
 
 export type UpdateCaseResult = { ok: true; updated_at: string } | { ok: false; conflict: true } | { ok: false; conflict: false; error: string };
@@ -240,10 +367,13 @@ export type UpdateCaseResult = { ok: true; updated_at: string } | { ok: false; c
 export async function updateCaseStatus(kind: "ticket" | "escalation", id: string, newStatus: CaseItem["status"], expectedUpdatedAt: string): Promise<UpdateCaseResult> {
   const supabase = supabaseAdminClient();
   const table = kind === "ticket" ? "support_tickets" : "escalations";
-  const { data, error } = await supabase.from(table).update({ status: newStatus }).eq("id", id).eq("updated_at", expectedUpdatedAt).select("updated_at").maybeSingle();
+  const { data, error } = await supabase.from(table).update({ status: newStatus }).eq("id", id).eq("updated_at", expectedUpdatedAt).select(kind === "escalation" ? "updated_at, ticket_id" : "updated_at").maybeSingle();
   if (error) return { ok: false, conflict: false, error: error.message };
   if (!data) return { ok: false, conflict: true };
-  return { ok: true, updated_at: data.updated_at as string };
+  const row = data as unknown as { updated_at: string; ticket_id?: string | null };
+  // An escalation and its linked ticket are one case in the queue, so they move together.
+  if (row.ticket_id) await supabase.from("support_tickets").update({ status: newStatus }).eq("id", row.ticket_id);
+  return { ok: true, updated_at: row.updated_at };
 }
 
 export interface EvaluationRunSummary {

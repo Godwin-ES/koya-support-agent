@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { ANSWER_PATH } from "@core/domain/status";
+import { formatDateTime, formatDuration } from "@core/domain/format-time";
 import { listConversations, parseSource } from "@/lib/server/console-data";
 import { SourceTabs } from "@/components/console/source-tabs";
-import { StatusBadge } from "@/components/primitives/status-badge";
+import { OutcomePill, channelLabel } from "@/components/console/outcome-pill";
 import { EmptyState } from "@/components/primitives/async-state";
 
-/** "Started, channel, duration, paths taken, outcome, escalated or ticketed, cost" (SYSTEM-DESIGN.md §11.1, §11.8). */
+/** Who, what they asked, when, how long and how it ended - the columns a support agent scans. Cost and per-turn detail live on the conversation's own page. */
 export default async function ConversationsPage({ searchParams }: { searchParams: Promise<{ channel?: string; escalated?: string; source?: string }> }) {
   const params = await searchParams;
   const source = parseSource(params.source);
@@ -29,39 +29,35 @@ export default async function ConversationsPage({ searchParams }: { searchParams
           <table className="w-full border-collapse text-sm">
             <thead className="sticky top-0 bg-[var(--color-surface-2)] text-left text-xs font-medium tracking-wide text-[var(--color-text-muted)]">
               <tr>
-                <th className="border-b border-[var(--color-border)] px-4 py-2.5">Started</th>
+                <th className="border-b border-[var(--color-border)] px-4 py-2.5">Customer</th>
+                <th className="border-b border-[var(--color-border)] px-4 py-2.5">First question</th>
                 <th className="border-b border-[var(--color-border)] px-4 py-2.5">Channel</th>
-                <th className="border-b border-[var(--color-border)] px-4 py-2.5">Duration</th>
-                <th className="border-b border-[var(--color-border)] px-4 py-2.5">Paths taken</th>
+                <th className="border-b border-[var(--color-border)] px-4 py-2.5">Started</th>
+                <th className="border-b border-[var(--color-border)] px-4 py-2.5">Length</th>
                 <th className="border-b border-[var(--color-border)] px-4 py-2.5">Outcome</th>
-                <th className="border-b border-[var(--color-border)] px-4 py-2.5">Cost</th>
               </tr>
             </thead>
             <tbody>
               {conversations.map((c) => {
-                const durationSeconds = c.ended_at ? Math.round((new Date(c.ended_at).getTime() - new Date(c.started_at).getTime()) / 1000) : null;
+                const durationSeconds = c.ended_at ? Math.max(0, Math.round((new Date(c.ended_at).getTime() - new Date(c.started_at).getTime()) / 1000)) : null;
                 return (
-                  <tr key={c.id} className="[transition:background-color_var(--transition-fast)] hover:bg-[var(--color-surface-hover)]">
-                    <td className="border-b border-[var(--color-border)] px-4 py-2.5">
-                      <Link href={`/console/conversations/${c.id}`} className="font-medium text-[var(--color-accent)] hover:underline">
-                        {new Date(c.started_at).toLocaleString()}
+                  <tr key={c.id} className="group relative [transition:background-color_var(--transition-fast)] hover:bg-[var(--color-surface-hover)]">
+                    <td className="border-b border-[var(--color-border)] px-4 py-3">
+                      {/* The whole row opens the conversation; this link is what keyboard and screen-reader users land on. */}
+                      <Link href={`/console/conversations/${c.id}`} className="font-medium text-[var(--color-text)] after:absolute after:inset-0 hover:text-[var(--color-accent)] focus-visible:outline-none focus-visible:after:outline focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-[var(--color-accent)]">
+                        {c.person?.name ?? "Evaluation run"}
                       </Link>
+                      {c.person?.detail && <span className="block text-xs text-[var(--color-text-muted)]">{c.person.detail}</span>}
                     </td>
-                    <td className="border-b border-[var(--color-border)] px-4 py-2.5 text-[var(--color-text-muted)]">{c.channel}</td>
-                    <td className="border-b border-[var(--color-border)] px-4 py-2.5 text-[var(--color-text-muted)]">{durationSeconds !== null ? `${durationSeconds}s` : c.ended_at === null ? "In progress" : "—"}</td>
-                    <td className="border-b border-[var(--color-border)] px-4 py-2.5">
-                      <div className="flex flex-wrap gap-1">
-                        {c.answer_types.map((t) => (
-                          <StatusBadge key={t} entry={ANSWER_PATH[t as keyof typeof ANSWER_PATH] ?? { label: t, icon: "Circle", tone: "neutral" }} />
-                        ))}
-                      </div>
+                    <td className="max-w-[320px] border-b border-[var(--color-border)] px-4 py-3">
+                      <span className="line-clamp-2 text-[var(--color-text)]">{c.opener ?? <span className="text-[var(--color-text-muted)]">No messages</span>}</span>
                     </td>
-                    <td className="border-b border-[var(--color-border)] px-4 py-2.5">
-                      {c.escalated && <span className="mr-1 text-xs font-medium text-[var(--color-warning-text)]">Escalated</span>}
-                      {c.ticketed && <span className="text-xs text-[var(--color-text-muted)]">Ticketed</span>}
-                      {!c.escalated && !c.ticketed && <span className="text-xs text-[var(--color-text-muted)]">{c.final_status ?? "—"}</span>}
+                    <td className="whitespace-nowrap border-b border-[var(--color-border)] px-4 py-3 text-[var(--color-text-muted)]">{channelLabel(c.channel)}</td>
+                    <td className="whitespace-nowrap border-b border-[var(--color-border)] px-4 py-3 text-[var(--color-text-muted)]">{formatDateTime(c.started_at)}</td>
+                    <td className="whitespace-nowrap border-b border-[var(--color-border)] px-4 py-3 text-[var(--color-text-muted)]">{durationSeconds !== null ? formatDuration(durationSeconds) : "—"}</td>
+                    <td className="border-b border-[var(--color-border)] px-4 py-3">
+                      <OutcomePill outcome={c.outcome} />
                     </td>
-                    <td className="border-b border-[var(--color-border)] px-4 py-2.5 text-[var(--color-text-muted)]">${c.cost_usd.toFixed(4)}</td>
                   </tr>
                 );
               })}

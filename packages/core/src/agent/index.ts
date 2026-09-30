@@ -7,3 +7,5 @@ export * from "./limits";
 export * from "./vapi";
 export * from "./conversation-summary";
 export * from "./caller-context";
+export * from "./summarize-conversation";
+export * from "./decision-tag";

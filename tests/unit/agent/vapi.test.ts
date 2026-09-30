@@ -96,6 +96,15 @@ describe("parseVapiEventBody", () => {
       endedReason: "customer-ended-call",
       summary: "Caller asked about fees.",
       transcript: "AI: Hi. User: What are your fees?",
+      latency: null,
+    });
+  });
+
+  it("reads Vapi's latency averages from artifact.performanceMetrics, rounded to whole milliseconds", () => {
+    const performanceMetrics = { turnLatencies: [{}, {}], turnLatencyAverage: 1830.4, endpointingLatencyAverage: 610, transcriberLatencyAverage: 240.6, modelLatencyAverage: 720, voiceLatencyAverage: 260, numUserInterrupted: 0, numAssistantInterrupted: 1 };
+    const body = { message: { type: "end-of-call-report", endedReason: "hangup", call: { id: "c1", assistantOverrides: { metadata: { conversation_id: "conv-1" } } }, artifact: { performanceMetrics } } };
+    expect(parseVapiEventBody(body)).toMatchObject({
+      latency: { turns: 2, turn_ms: 1830, endpointing_ms: 610, transcriber_ms: 241, model_ms: 720, voice_ms: 260, caller_interrupted_agent: 1, agent_interrupted_caller: 0 },
     });
   });
 

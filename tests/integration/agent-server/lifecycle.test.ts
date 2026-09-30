@@ -3,7 +3,7 @@
 // Ending conversations against the real database: one end per
 // conversation however many end signals arrive, a summary and total cost
 // written, and the sweep closing the chats and calls that never send one.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { finalizeConversation, sweepStaleConversations } from "../../../agent-server/src/lifecycle";
 import { claimOnce } from "../../../agent-server/src/ops";
 import { serviceRoleClient } from "../helpers/db";
@@ -59,6 +59,42 @@ describe("finalizeConversation", () => {
     await finalizeConversation(supabase, id, { endedReason: "customer-ended-call", finalStatus: "completed", vapiSummary: "The caller asked about fees." });
     const { data } = await supabase.from("conversations").select("summary").eq("id", id).single();
     expect(data!.summary).toBe("The caller asked about fees.");
+  });
+});
+
+describe("the natural summary", () => {
+  it("a real account's conversation gets the summarizer's natural summary, given the transcript and the customer", async () => {
+    const id = await newConversation({ channel: "web_text", caller_ref: `summary-test-${crypto.randomUUID()}`, verified_customer_id: "CUS-1001" });
+    await addTurn(id, 1, "answer", 0.01);
+    let seen: unknown = null;
+    await finalizeConversation(supabase, id, {
+      endedReason: "caller_ended",
+      finalStatus: "completed",
+      summarize: async (c) => {
+        seen = c;
+        return "Amara asked how long an international transfer takes; the agent explained it usually takes one business day.";
+      },
+    });
+    const { data } = await supabase.from("conversations").select("summary").eq("id", id).single();
+    expect(data!.summary).toBe("Amara asked how long an international transfer takes; the agent explained it usually takes one business day.");
+    expect(seen).toMatchObject({ customer: { name: "Amara Okafor", company: "LagosLedger" }, turns: [{ user_transcript: "How long does an international transfer take?" }] });
+  });
+
+  it("an evaluation run (no account) keeps the built summary - no model call", async () => {
+    const id = await newConversation({ channel: "web_text", caller_ref: null });
+    await addTurn(id, 1, "answer", 0.01);
+    let called = false;
+    await finalizeConversation(supabase, id, { endedReason: "caller_ended", finalStatus: "completed", summarize: async () => { called = true; return "x"; } });
+    expect(called).toBe(false);
+  });
+
+  it("falls back to the built summary if the model call fails", async () => {
+    const id = await newConversation({ channel: "web_text", caller_ref: `summary-test-${crypto.randomUUID()}` });
+    await addTurn(id, 1, "answer", 0.01);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await finalizeConversation(supabase, id, { endedReason: "caller_ended", finalStatus: "completed", summarize: async () => { throw new Error("overloaded"); } });
+    const { data } = await supabase.from("conversations").select("summary").eq("id", id).single();
+    expect(data!.summary).toMatch(/^Web chat, 1 turn\./);
   });
 });
 

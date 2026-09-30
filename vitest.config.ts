@@ -10,6 +10,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./tests/setup.ts"],
+    // Integration tests talk to the real Supabase project; several network
+    // round trips can pass Vitest's 5s default on a slow connection.
+    testTimeout: 20_000,
     globals: false,
     include: [
       "tests/unit/**/*.test.ts",

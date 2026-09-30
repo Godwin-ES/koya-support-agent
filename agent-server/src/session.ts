@@ -9,7 +9,7 @@
 // `query()` from `@anthropic-ai/claude-agent-sdk`.
 import { query, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildSystemPrompt, decideTurn, extractEmails, VoiceStreamFilter, type AnswerType, type Channel, type DeclaredDecision } from "@core/agent";
+import { buildSystemPrompt, decideTurn, DecisionTagExtractor, extractEmails, stripDecisionTags, VoiceStreamFilter, type AnswerType, type Channel, type DeclaredDecision } from "@core/agent";
 import { currentTurnSeq, readTurnToolCalls, type ToolContext, createSupportTicket } from "@core/mcp";
 import { AgentFailure, classifyMcpFailure, classifySdkError, CLAUDE_DOWN_FALLBACK, MCP_DOWN_FALLBACK } from "@core/domain/failure";
 import { RetryBuffer } from "@core/domain/write-buffer";
@@ -29,7 +29,11 @@ const TOOL_NAMES = ["search_knowledge", "lookup_customer", "lookup_transaction",
 // turn, and never saved into the recorded reply - it's there to fill
 // silence, not part of the answer. Generic on purpose ("let me check"
 // would be wrong on a turn with no lookup).
-const HOLDING_DELAY_MS = 900;
+// 2.5s, not the original 0.9s: the agent now opens with its own words (it no
+// longer has to log a decision before speaking), so this is a rare fallback
+// for a slow turn rather than something said every time - a generic filler
+// followed straight away by the real answer sounded crammed together.
+const HOLDING_DELAY_MS = 2_500;
 export const HOLDING_PHRASES = ["Okay, one moment. ", "Sure, let's see. ", "Right, just a second. ", "Mm, give me a moment. "] as const;
 
 export type TurnDeltaEvent = { kind: "delta"; text: string };
@@ -232,6 +236,7 @@ export class Session {
 
     const startedAt = performance.now();
     const filter = new VoiceStreamFilter(this.allowedEmails);
+    const decisionTag = new DecisionTagExtractor();
     let declared: DeclaredDecision | undefined;
     let assistantResponse = "";
     let firstTokenAt: number | null = null;
@@ -272,6 +277,7 @@ export class Session {
           // message and is counted in that turn's delta.
           const seq = await currentTurnSeq(this.toolContext);
           const recorded = await readTurnToolCalls(this.toolContext, seq);
+          if (decisionTag.decision) declared = decisionTag.decision;
           const decision = decideTurn({ toolCalls: recorded, declared });
           const ttft_ms = firstTokenAt !== null ? Math.round(firstTokenAt - startedAt) : null;
           const total_ms = Math.round(performance.now() - startedAt);
@@ -279,7 +285,7 @@ export class Session {
             conversation_id: this.conversationId,
             seq,
             user_transcript: userText,
-            assistant_response: summarize(assistantResponse, 4000),
+            assistant_response: summarize(stripDecisionTags(assistantResponse), 4000),
             answer_type: decision.answer_type,
             answer_type_inferred: decision.inferred,
             confidence: decision.confidence,
@@ -293,9 +299,19 @@ export class Session {
           return;
         }
 
+        // A new text block after a tool call ("Let me pull that up." [lookup]
+        // "Good news...") would otherwise run straight on - "up.Good" - and
+        // the voice says both sentences as one crunched run.
+        if (message.type === "stream_event" && message.event.type === "content_block_start" && message.event.content_block.type === "text" && /\S$/.test(assistantResponse)) {
+          assistantResponse += " ";
+          const text = filter.push(decisionTag.push(" "));
+          if (text) yield { kind: "delta", text };
+          continue;
+        }
+
         if (message.type === "stream_event" && message.event.type === "content_block_delta" && message.event.delta.type === "text_delta") {
           if (firstTokenAt === null) firstTokenAt = performance.now();
-          const text = filter.push(message.event.delta.text);
+          const text = filter.push(decisionTag.push(message.event.delta.text));
           assistantResponse += message.event.delta.text;
           if (text) yield { kind: "delta", text };
           continue;
@@ -326,7 +342,8 @@ export class Session {
             return;
           }
 
-          const tail = filter.flush();
+          const tail = filter.push(decisionTag.flush()) + filter.flush();
+          if (decisionTag.decision) declared = decisionTag.decision;
           if (tail) yield { kind: "delta", text: tail };
 
           const seq = await currentTurnSeq(this.toolContext);
@@ -339,11 +356,21 @@ export class Session {
           const cost_usd = Math.max(0, cumulative - this.cumulativeCostUsd);
           this.cumulativeCostUsd = cumulative;
 
+          // The same "decision" event log_conversation_event used to write, so the audit trail is unchanged.
+          if (decisionTag.decision) {
+            await this.writeBuffer.writeOrBuffer("conversation_events", {
+              conversation_id: this.conversationId,
+              turn_seq: seq,
+              event_type: "decision",
+              summary: `Declared answer_type=${decisionTag.decision.answer_type}.`,
+              metadata: decisionTag.decision,
+            });
+          }
           await this.writeBuffer.writeOrBuffer("conversation_turns", {
             conversation_id: this.conversationId,
             seq,
             user_transcript: userText,
-            assistant_response: summarize(assistantResponse, 4000),
+            assistant_response: summarize(stripDecisionTags(assistantResponse), 4000),
             answer_type: decision.answer_type,
             answer_type_inferred: decision.inferred,
             confidence: decision.confidence,

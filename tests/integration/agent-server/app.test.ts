@@ -359,10 +359,11 @@ describe("POST /api/text/end", () => {
     expect(res.status).toBe(200);
     expect(sessionManager.has(body.conversation_id as string)).toBe(false);
 
-    const { data: conversation } = await supabase.from("conversations").select("ended_at, ended_reason, final_status, summary").eq("id", body.conversation_id).single();
+    // Ended before the response; the summary is written just after, in the background.
+    const { data: conversation } = await supabase.from("conversations").select("ended_at, ended_reason, final_status").eq("id", body.conversation_id).single();
     expect(conversation).toMatchObject({ ended_reason: "caller_ended", final_status: "completed" });
     expect(conversation?.ended_at).toBeTruthy();
-    expect(conversation?.summary).toBe("Web chat with no messages. Ended by the customer.");
+    await expect.poll(async () => (await supabase.from("conversations").select("summary").eq("id", body.conversation_id).single()).data?.summary, { timeout: 5_000 }).toBe("Web chat with no messages. Ended by the customer.");
   });
 
   it("rejects an invalid token", async () => {

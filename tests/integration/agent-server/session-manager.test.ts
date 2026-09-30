@@ -73,7 +73,7 @@ function slowFirstReplyFactory(script: SDKMessage[], delayMs: number): NonNullab
 describe("the holding phrase", () => {
   async function runSlowTurn(channel: "web_voice" | "web_text") {
     const conversationId = await newConversation();
-    const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", queryFactory: slowFirstReplyFactory([textDelta("Fees depend on the corridor."), resultMessage()], 1_200) });
+    const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", queryFactory: slowFirstReplyFactory([textDelta("Fees depend on the corridor."), resultMessage()], 3_000) });
     const session = await manager.getOrCreate(conversationId, channel);
     const deltas: string[] = [];
     for await (const event of session.runTurn("What are your fees?")) if (event.kind === "delta") deltas.push(event.text);
@@ -93,6 +93,33 @@ describe("the holding phrase", () => {
     expect(spoken).toBe("Fees depend on the corridor.");
     expect(recorded).toBe("Fees depend on the corridor.");
   }, 10_000);
+});
+
+describe("the decision tag", () => {
+  it("is taken out of the stream and the recorded reply, and becomes the turn's declared decision", async () => {
+    const conversationId = await newConversation();
+    const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", queryFactory: scriptedQueryFactory([textDelta("Fees depend on the corridor. <deci"), textDelta('sion type="clarify" confidence="0.7"/>'), resultMessage()]) });
+    const session = await manager.getOrCreate(conversationId, "web_text");
+    const deltas: string[] = [];
+    for await (const event of session.runTurn("What are your fees?")) if (event.kind === "delta") deltas.push(event.text);
+    expect(deltas.join("")).toBe("Fees depend on the corridor. ");
+    const { data } = await supabase.from("conversation_turns").select("assistant_response, answer_type, answer_type_inferred, confidence").eq("conversation_id", conversationId).single();
+    expect(data).toMatchObject({ assistant_response: "Fees depend on the corridor.", answer_type: "clarify", answer_type_inferred: false, confidence: 0.7 });
+  });
+});
+
+describe("text after a tool call", () => {
+  it("is separated from the opener by a space, so the two sentences aren't spoken as one run", async () => {
+    const conversationId = await newConversation();
+    const textBlockStart = { type: "stream_event", event: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } } as unknown as SDKMessage;
+    const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", queryFactory: scriptedQueryFactory([textDelta("Let me pull that up."), textBlockStart, textDelta("Good news, it's on its way."), resultMessage()]) });
+    const session = await manager.getOrCreate(conversationId, "web_voice");
+    const deltas: string[] = [];
+    for await (const event of session.runTurn("Where's my transfer?")) if (event.kind === "delta") deltas.push(event.text);
+    expect(deltas.join("")).toBe("Let me pull that up. Good news, it's on its way.");
+    const { data } = await supabase.from("conversation_turns").select("assistant_response").eq("conversation_id", conversationId).single();
+    expect(data!.assistant_response).toBe("Let me pull that up. Good news, it's on its way.");
+  });
 });
 
 describe("SessionManager", () => {

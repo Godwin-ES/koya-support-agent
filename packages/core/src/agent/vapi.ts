@@ -85,8 +85,40 @@ interface VapiCall {
   analysis?: { summary?: string };
 }
 
+/** Vapi's artifact.performanceMetrics averages, in milliseconds (checked against its OpenAPI spec, PerformanceMetrics). */
+export interface VoiceLatency {
+  turns: number;
+  turn_ms: number | null;
+  endpointing_ms: number | null;
+  transcriber_ms: number | null;
+  model_ms: number | null;
+  voice_ms: number | null;
+  caller_interrupted_agent: number | null;
+  agent_interrupted_caller: number | null;
+}
+
+function ms(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? Math.round(value) : null;
+}
+
+export function parseVoiceLatency(metrics: unknown): VoiceLatency | null {
+  if (!metrics || typeof metrics !== "object") return null;
+  const m = metrics as Record<string, unknown>;
+  const latency: VoiceLatency = {
+    turns: Array.isArray(m.turnLatencies) ? m.turnLatencies.length : 0,
+    turn_ms: ms(m.turnLatencyAverage),
+    endpointing_ms: ms(m.endpointingLatencyAverage),
+    transcriber_ms: ms(m.transcriberLatencyAverage),
+    model_ms: ms(m.modelLatencyAverage),
+    voice_ms: ms(m.voiceLatencyAverage),
+    caller_interrupted_agent: ms(m.numAssistantInterrupted),
+    agent_interrupted_caller: ms(m.numUserInterrupted),
+  };
+  return latency.turn_ms === null && latency.model_ms === null ? null : latency;
+}
+
 export type ParsedVapiEvent =
-  | { type: "end-of-call-report"; callId: string | null; conversationId: string | null; endedReason: string; summary: string | null; transcript: string | null }
+  | { type: "end-of-call-report"; callId: string | null; conversationId: string | null; endedReason: string; summary: string | null; transcript: string | null; latency: VoiceLatency | null }
   | { type: "status-update"; callId: string | null; conversationId: string | null; status: string }
   | { type: "hang"; callId: string | null; conversationId: string | null }
   | null;
@@ -95,13 +127,13 @@ export function parseVapiEventBody(body: unknown): ParsedVapiEvent {
   if (!body || typeof body !== "object" || !("message" in body)) return null;
   const message = (body as { message: unknown }).message;
   if (!message || typeof message !== "object" || !("type" in message)) return null;
-  const m = message as { type: string; call?: VapiCall; endedReason?: string; status?: string; artifact?: { transcript?: string } };
+  const m = message as { type: string; call?: VapiCall; endedReason?: string; status?: string; artifact?: { transcript?: string; performanceMetrics?: unknown } };
   const call = m.call;
   const callId = call?.id ?? null;
   const conversationId = call?.assistantOverrides?.metadata?.conversation_id ?? call?.metadata?.conversation_id ?? null;
 
   if (m.type === "end-of-call-report") {
-    return { type: "end-of-call-report", callId, conversationId, endedReason: m.endedReason ?? "unknown", summary: call?.analysis?.summary ?? null, transcript: m.artifact?.transcript ?? null };
+    return { type: "end-of-call-report", callId, conversationId, endedReason: m.endedReason ?? "unknown", summary: call?.analysis?.summary ?? null, transcript: m.artifact?.transcript ?? null, latency: parseVoiceLatency(m.artifact?.performanceMetrics) };
   }
   if (m.type === "status-update") {
     return { type: "status-update", callId, conversationId, status: m.status ?? "unknown" };

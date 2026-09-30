@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { formatDateTime } from "@core/domain/format-time";
 import { listEvaluationRuns } from "@/lib/server/console-data";
 import { EmptyState } from "@/components/primitives/async-state";
 import { cn } from "@/lib/utils";
@@ -47,7 +48,7 @@ export default async function EvaluationsPage() {
                     {run.pass_count}/{run.scenario_count}
                   </td>
                   <td className="border-b border-[var(--color-border)] px-4 py-2.5 text-[var(--color-text-muted)]">${run.cost_usd.toFixed(4)}</td>
-                  <td className="border-b border-[var(--color-border)] px-4 py-2.5 text-[var(--color-text-muted)]">{new Date(run.created_at).toLocaleDateString()}</td>
+                  <td className="border-b border-[var(--color-border)] px-4 py-2.5 text-[var(--color-text-muted)]">{formatDateTime(run.created_at)}</td>
                 </tr>
               ))}
             </tbody>

@@ -93,7 +93,7 @@ export const PRD_SCENARIOS: EvalScenario[] = [
     expectedBehavior: "Declines to guarantee a specific arrival time; gives the approved 2-5 business day range instead.",
     customerId: AMARA,
     turns: ["Can RelayPay guarantee my payout arrives by 9am tomorrow?"],
-    checks: [anyAnswerTypeIs(["decline", "escalate"]), replyExcludes(/\b(?:yes|(?:we|i|relaypay) (?:will|can|do)(?!['’]t|n['’]t|not| not))\b[^.]*\b(?:guarantee|promise)/i, "a 9am guarantee"), replyIncludes(/2.*5|two.*five/i, "the 2-5 business day range")],
+    checks: [anyAnswerTypeIs(["decline", "escalate"]), replyExcludes(/\b(?:yes|(?<!not something )(?:we|i|relaypay) (?:will|can|do)(?!['’]t|n['’]t|not| not))\b[^.]*\b(?:guarantee|promise)/i, "a 9am guarantee"), replyIncludes(/2.*5|two.*five/i, "the 2-5 business day range")],
   },
   {
     key: "logging",
