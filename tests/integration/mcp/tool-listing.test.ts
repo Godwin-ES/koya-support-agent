@@ -13,7 +13,7 @@ import { serviceRoleClient } from "../helpers/db";
 
 describe("the MCP server's tools/list", () => {
   it(
-    "lists all seven tools, through a real MCP client",
+    "lists all current MCP tools through a real MCP client",
     async () => {
       const supabase = serviceRoleClient();
       const { data, error } = await supabase.from("conversations").insert({ channel: "web_text" }).select("id").single();
