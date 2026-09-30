@@ -1,24 +1,24 @@
 /**
- * The only way to give someone access - the customer app is invite-only
- * and public sign-up is gone. Marks the account `app_metadata.invited`
- * (and `is_staff` with --staff) through the admin API, which is the only
- * thing that can write `app_metadata`; web/lib/auth.ts and agent-server
- * both check it.
+ * Invites someone - the only way in besides the five sample customers.
+ * Every invite is a staff invite: the invited person gets the support
+ * console and the customer app (general questions there; account lookups
+ * need a sample customer). An invite from the Supabase dashboard's "Invite
+ * user" does exactly the same - Supabase's own invited_at is what makes an
+ * account staff (web/lib/auth.ts isStaff).
  *
  *   node scripts/invite-user.mjs --email reviewer@example.com --name "Ada Mensah"
- *   node scripts/invite-user.mjs --email staff@example.com --name "Theo Mann" --staff
  *   node scripts/invite-user.mjs --email reviewer@example.com --name "Ada Mensah" --link
  *
  * By default Supabase emails the invite. Its built-in email service only
  * delivers to your own Supabase team's addresses unless a custom SMTP
  * provider is set up, so for anyone else use --link: it prints the invite
  * link for you to send yourself (one use, and it expires - treat it like a
- * password). Either way the invitee opens the link, chooses a password,
- * and lands in the customer app (or the console, for staff).
+ * password). The invitee opens it, enters their name and a password, and
+ * lands in the console.
  *
- * An email that already has an account is just granted access; no invite
- * is sent. Reads .env.local; prints no secret values other than the link
- * you asked for with --link.
+ * An email that already has an account is made staff instead; no invite is
+ * sent. Reads .env.local; prints no secret values other than the link you
+ * asked for with --link.
  */
 import { config } from "dotenv";
 import { existsSync } from "node:fs";
@@ -32,11 +32,10 @@ function arg(name) {
 }
 const email = arg("email")?.trim().toLowerCase();
 const name = arg("name")?.trim();
-const staff = process.argv.includes("--staff");
 const linkOnly = process.argv.includes("--link");
 
 if (!email) {
-  console.error('Usage: node scripts/invite-user.mjs --email <email> --name "<full name>" [--staff] [--link]');
+  console.error('Usage: node scripts/invite-user.mjs --email <email> --name "<full name>" [--link]');
   process.exit(1);
 }
 const appUrl = process.env.APP_URL?.replace(/\/$/, "");
@@ -46,9 +45,8 @@ if (!appUrl) {
 }
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
-const access = { invited: true, ...(staff ? { is_staff: true } : {}) };
-// Both invite kinds land on the one callback Supabase already allows; it
-// routes staff and customers to their own password page.
+const access = { invited: true, is_staff: true };
+// The one callback URL Supabase already allows; it leads to the staff set-up page.
 const redirectTo = `${appUrl}/console/auth/callback`;
 
 async function findUser(address) {
@@ -72,7 +70,7 @@ if (!existing && !name) {
 }
 if (existing) {
   await grant(existing);
-  console.log(`${email} already has an account - access granted${staff ? " (staff)" : ""}. No invite sent.`);
+  console.log(`${email} already has an account - access granted. No invite sent.`);
   process.exit(0);
 }
 
@@ -83,7 +81,7 @@ if (linkOnly) {
     process.exit(1);
   }
   await grant(data.user);
-  console.log(`Invite created for ${email}${staff ? " (staff)" : ""}. Send them this link (one use):\n\n${data.properties.action_link}\n`);
+  console.log(`Invite created for ${email}. Send them this link (one use):\n\n${data.properties.action_link}\n`);
 } else {
   const { data, error } = await supabase.auth.admin.inviteUserByEmail(email, { redirectTo, data: { name } });
   if (error) {
@@ -91,5 +89,5 @@ if (linkOnly) {
     process.exit(1);
   }
   await grant(data.user);
-  console.log(`Invite emailed to ${email}${staff ? " (staff)" : ""}.`);
+  console.log(`Invite emailed to ${email}.`);
 }

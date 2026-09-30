@@ -25,6 +25,17 @@ describe("isStaff", () => {
   });
 });
 
+describe("isStaff - anyone invited is staff", () => {
+  it("is true for an invited account (dashboard or script), and for the is_staff flag", () => {
+    expect(isStaff({ app_metadata: {}, invited_at: "2026-09-30T12:00:00Z" } as User)).toBe(true);
+    expect(isStaff(userWith({ is_staff: true }))).toBe(true);
+  });
+
+  it("is false for a sample customer, who is created directly rather than invited", () => {
+    expect(isStaff(userWith({ invited: true, customer_id: "CUS-1001" }))).toBe(false);
+  });
+});
+
 describe("hasAppAccess", () => {
   it("is true for the invite script's flag, staff, or any Supabase admin invite (including one sent from the dashboard)", () => {
     expect(hasAppAccess(userWith({ invited: true }))).toBe(true);

@@ -17,7 +17,7 @@ export default async function HistoryPage() {
 
   return (
     <div className="bg-dot-grid flex min-h-dvh flex-col">
-      <AppHeader displayName={account.displayName ?? account.user.email ?? null} companyName={account.companyName} initials={initialsFrom(account.displayName, account.user.email ?? null)} onSignOut={signOut} showSignOut current="history" />
+      <AppHeader displayName={account.displayName} email={account.user.email ?? null} initials={initialsFrom(account.displayName, account.user.email ?? null)} onSignOut={signOut} showSignOut current="history" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
         <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-primary)]">Your conversations</h1>
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">Past calls and chats with RelayPay support. Open one to read it again.</p>

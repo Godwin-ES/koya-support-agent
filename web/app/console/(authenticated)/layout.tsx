@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { supabaseServerClient } from "@/lib/supabase/server";
 import { isStaff } from "@/lib/auth";
@@ -31,6 +32,10 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
         <header className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-3 shadow-[var(--shadow-sm)]">
           <ConsoleBreadcrumb />
           <div className="flex items-center gap-4">
+            {/* Staff can use the customer app too (general questions; account lookups need a sample customer). */}
+            <Link href="/" className="text-sm font-medium text-[var(--color-accent)] hover:underline">
+              Customer app
+            </Link>
             <span className="text-sm text-[var(--color-text-muted)]">{user.email}</span>
             <form action={signOut}>
               <button type="submit" className="text-sm font-medium text-[var(--color-accent)] [transition:opacity_var(--transition-fast)] hover:opacity-80 hover:underline">

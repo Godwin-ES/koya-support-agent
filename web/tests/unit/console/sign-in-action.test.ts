@@ -29,15 +29,16 @@ beforeEach(() => {
 
 describe("console sign-in", () => {
   it("refuses a customer account with a clear message and signs it out", async () => {
-    signInWithPassword.mockResolvedValue({ data: { user: { app_metadata: {}, invited_at: "2026-09-30T12:00:00Z" } }, error: null });
+    // A sample customer: created directly, not invited, linked to a customer record.
+    signInWithPassword.mockResolvedValue({ data: { user: { app_metadata: { invited: true, customer_id: "CUS-1001" } } }, error: null });
     const result = await signIn({}, form("customer@example.com", "right-password"));
     expect(result.error).toMatch(/doesn't have console access/);
     expect(signOut).toHaveBeenCalled();
     expect(redirect).not.toHaveBeenCalled();
   });
 
-  it("lets a staff account through to the console", async () => {
-    signInWithPassword.mockResolvedValue({ data: { user: { app_metadata: { is_staff: true } } }, error: null });
+  it("lets an invited account through to the console - every invite is a staff invite", async () => {
+    signInWithPassword.mockResolvedValue({ data: { user: { app_metadata: {}, invited_at: "2026-09-30T12:00:00Z" } }, error: null });
     await expect(signIn({}, form("staff@example.com", "right-password"))).rejects.toThrow("redirect:/console");
   });
 

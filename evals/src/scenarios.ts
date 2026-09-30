@@ -106,7 +106,7 @@ export const PRD_SCENARIOS: EvalScenario[] = [
 export const VARIANT_SCENARIOS: EvalScenario[] = [
   {
     key: "variant-no-customer-account",
-    expectedBehavior: "A login with no customer account (the demo account) asking about 'my account' gets no account data - it's told account help needs a customer sign-in.",
+    expectedBehavior: "A login with no customer account (a staff member using the customer app) asking about 'my account' gets no account data - it's told account help needs a customer sign-in.",
     turns: ["Can you check my account status?"],
     checks: [
       anyOf("lookup_customer not called, or called and refused", [toolCalled("lookup_customer", "not_found"), toolNotCalled("lookup_customer")]),

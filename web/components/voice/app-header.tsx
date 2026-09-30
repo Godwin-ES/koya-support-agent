@@ -11,14 +11,15 @@ const NAV = [
 
 export function AppHeader({
   displayName,
-  companyName = null,
+  email = null,
   initials,
   onSignOut,
   showSignOut,
   current = "support",
 }: {
   displayName: string | null;
-  companyName?: string | null;
+  /** Shown under the name. */
+  email?: string | null;
   initials: string;
   onSignOut: () => Promise<void>;
   showSignOut: boolean;
@@ -50,12 +51,12 @@ export function AppHeader({
           </nav>
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
-          {displayName && (
+          {(displayName || email) && (
             <div className="flex items-center gap-2.5">
               <UserAvatar initials={initials} className="ring-0" />
               <span className="hidden min-w-0 flex-col leading-tight sm:flex">
-                <span className="max-w-[200px] truncate text-sm font-medium text-[var(--color-text)]">{displayName}</span>
-                {companyName && <span className="max-w-[200px] truncate text-xs text-[var(--color-text-muted)]">{companyName}</span>}
+                <span className="max-w-[220px] truncate text-sm font-medium text-[var(--color-text)]">{displayName ?? email}</span>
+                {displayName && email && <span className="max-w-[220px] truncate text-xs text-[var(--color-text-muted)]">{email}</span>}
               </span>
             </div>
           )}

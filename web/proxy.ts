@@ -39,7 +39,7 @@ export async function proxy(request: NextRequest) {
 
   // The invite-completion flow arrives with no session cookie yet - that's
   // exactly what it establishes, so it can't be behind this same gate.
-  if (pathname.startsWith("/console/auth/") || pathname.startsWith("/auth/")) return response;
+  if (pathname.startsWith("/console/auth/")) return response;
 
   const isConsoleRoute = pathname.startsWith("/console") && pathname !== "/console/sign-in";
   if (isConsoleRoute && !isStaff(user)) {
@@ -71,5 +71,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/console/:path*", "/", "/history/:path*", "/sign-in", "/auth/:path*"],
+  matcher: ["/console/:path*", "/", "/history/:path*", "/sign-in"],
 };

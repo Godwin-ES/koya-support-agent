@@ -11,8 +11,9 @@ tickets or hands off to a human when it should.
 
 1. Open the link and choose one of the **sample customers** on the sign-in
    page (one click, no password). Each customer sees only their own
-   account, transactions and payouts. **Sign in with demo account** is for
-   general questions only. Access is otherwise by invitation.
+   account, transactions and payouts. Anyone invited is staff: they sign
+   in with their own email and password, get the support console, and can
+   use the customer app for general questions.
 2. Press the call button and allow the microphone, or choose **Type
    instead**. The agent greets you by name.
 3. Try any of these:

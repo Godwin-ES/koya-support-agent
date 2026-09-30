@@ -22,7 +22,7 @@ export default async function HistoryDetailPage({ params }: { params: Promise<{ 
 
   return (
     <div className="bg-dot-grid flex min-h-dvh flex-col">
-      <AppHeader displayName={account.displayName ?? account.user.email ?? null} companyName={account.companyName} initials={initials} onSignOut={signOut} showSignOut current="history" />
+      <AppHeader displayName={account.displayName} email={account.user.email ?? null} initials={initials} onSignOut={signOut} showSignOut current="history" />
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
         <Link href="/history" className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] text-sm font-medium text-[var(--color-accent)] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]">
           <ArrowLeft className="size-4" aria-hidden="true" />

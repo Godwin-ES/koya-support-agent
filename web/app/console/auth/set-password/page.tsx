@@ -10,12 +10,16 @@ export default function SetPasswordPage() {
   const [state, formAction, isPending] = useActionState<SetPasswordResult, FormData>(setPassword, {});
 
   return (
-    <AuthShell title="Set your password" subtitle="You'll use it to sign in to the console." audience="staff">
+    <AuthShell title="Finish setting up your account" subtitle="You'll use it to sign in to the support console and the customer app." audience="staff">
       <form action={formAction} className="flex flex-col gap-4">
-        <AuthField label="Password" type="password" name="password" required autoComplete="new-password" />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <AuthField label="First name" type="text" name="first_name" required autoComplete="given-name" />
+          <AuthField label="Last name" type="text" name="last_name" required autoComplete="family-name" />
+        </div>
+        <AuthField label="Password" type="password" name="password" required minLength={8} autoComplete="new-password" />
         <FormError message={state.error} />
         <SubmitButton pending={isPending} pendingLabel="Saving…">
-          Save password
+          Save and continue
         </SubmitButton>
       </form>
     </AuthShell>

@@ -1,16 +1,17 @@
 import type { User } from "@supabase/supabase-js";
 
 /**
- * Access lives in `app_metadata` (never `user_metadata`) - only the
- * service-role/admin API can write it, so nobody can grant it to
- * themselves the way they could with `user_metadata` (which
- * `auth.updateUser()` lets any signed-in user edit on their own account).
- * Both flags are set only by `scripts/invite-user.mjs` (and the demo and
- * staff account scripts), when the invite is sent - never by the invitee
- * completing it.
+ * Staff: anyone invited. An invite is how reviewers and team members get
+ * in, and every one of them gets the console as well as the customer app.
+ * Supabase stamps `invited_at` on every account an admin invites (from the
+ * dashboard or scripts/invite-user.mjs), and only an admin can cause that -
+ * public sign-up never sets it, and users can't change it. `is_staff` in
+ * `app_metadata` (admin-only, unlike `user_metadata`) covers staff accounts
+ * created without an invite. The sample customers are created directly, not
+ * invited, so they stay customers.
  */
 export function isStaff(user: User | null): user is User {
-  return user?.app_metadata?.is_staff === true;
+  return user?.app_metadata?.is_staff === true || Boolean(user?.invited_at);
 }
 
 /**

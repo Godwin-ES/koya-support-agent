@@ -12,7 +12,6 @@ export default async function VoicePage() {
       userName={account.displayName}
       userEmail={account.user.email ?? null}
       greetingName={account.greetingName}
-      companyName={account.companyName}
     />
   );
 }

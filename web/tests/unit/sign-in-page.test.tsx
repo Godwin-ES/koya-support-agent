@@ -4,13 +4,10 @@
 // call, $0), matching how voice-page.test.tsx mocks hooks.
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 
 const mockSignIn = vi.fn(async () => ({}));
-const mockDemoSignIn = vi.fn(async () => ({}));
 vi.mock("@/app/sign-in/actions", () => ({
   signIn: (...args: unknown[]) => mockSignIn(...args),
-  demoSignIn: (...args: unknown[]) => mockDemoSignIn(...args),
   sampleCustomerSignIn: vi.fn(async () => ({})),
 }));
 
@@ -23,23 +20,19 @@ describe("sign-in page", () => {
     expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
   });
 
-  it("offers a one-click demo account with no form fields of its own", async () => {
+  it("offers no demo-account button - the sample customers replace it", async () => {
     const { default: SignInPage } = await import("@/app/sign-in/page");
-    const user = userEvent.setup();
     render(<SignInPage />);
-
-    const demoButton = screen.getByRole("button", { name: /sign in with demo account/i });
-    expect(demoButton).toBeInTheDocument();
-    await user.click(demoButton);
-    expect(mockDemoSignIn).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /demo account/i })).not.toBeInTheDocument();
   });
 
   it("offers each of the five sample customers as a one-click sign-in", async () => {
     const { default: SignInPage } = await import("@/app/sign-in/page");
     render(<SignInPage />);
-    for (const name of ["Amara Okafor of LagosLedger", "Daniel Mwangi of NairobiOps", "Efua Mensah of AccraStack", "Amina Jacobs of CapeCloud", "Patrick Ndayisaba of KigaliWorks"]) {
+    for (const name of ["Amara Okafor", "Daniel Mwangi", "Efua Mensah", "Amina Jacobs", "Patrick Ndayisaba"]) {
       expect(screen.getByRole("button", { name: `Sign in as ${name}` })).toBeInTheDocument();
     }
+    expect(screen.queryByText("LagosLedger")).not.toBeInTheDocument();
   });
 
   it("offers no sign-up - access is by invitation only", async () => {
