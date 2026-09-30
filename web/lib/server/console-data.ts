@@ -16,11 +16,23 @@ function startOfTodayUtc(): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
 }
 
+/**
+ * Where a conversation came from. Customer conversations belong to a
+ * signed-in account; evaluation runs (evals/) create theirs with no account.
+ * The console shows customers by default - evaluation traffic outnumbers
+ * real conversations and would bury them.
+ */
+export type ConversationSource = "customers" | "evaluations";
+
+export function parseSource(value: string | undefined): ConversationSource {
+  return value === "evaluations" ? "evaluations" : "customers";
+}
+
 export async function getOverview(): Promise<OverviewData> {
   const supabase = supabaseAdminClient();
   const [{ count: todaysConversationCount }, { count: openEscalationCount }, { data: latestEvaluation }] = await Promise.all([
-    supabase.from("conversations").select("*", { count: "exact", head: true }).gte("started_at", startOfTodayUtc()),
-    supabase.from("escalations").select("*", { count: "exact", head: true }).eq("status", "open"),
+    supabase.from("conversations").select("*", { count: "exact", head: true }).not("caller_ref", "is", null).gte("started_at", startOfTodayUtc()),
+    supabase.from("escalations").select("id, conversations!inner(caller_ref)", { count: "exact", head: true }).not("conversations.caller_ref", "is", null).eq("status", "open"),
     supabase.from("evaluations").select("run_id").order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
   return { todaysConversationCount: todaysConversationCount ?? 0, openEscalationCount: openEscalationCount ?? 0, latestEvaluationRunId: latestEvaluation?.run_id ?? null };
@@ -42,12 +54,14 @@ export interface ConversationListFilters {
   channel?: string;
   escalated?: boolean;
   search?: string;
+  source?: ConversationSource;
 }
 
 export async function listConversations(filters: ConversationListFilters = {}): Promise<ConversationListItem[]> {
   const supabase = supabaseAdminClient();
   let query = supabase.from("conversations").select("id, channel, started_at, ended_at, final_status, summary, cost_usd, conversation_turns(answer_type), escalations(id), support_tickets(id)").order("started_at", { ascending: false }).limit(200);
   if (filters.channel) query = query.eq("channel", filters.channel);
+  query = (filters.source ?? "customers") === "customers" ? query.not("caller_ref", "is", null) : query.is("caller_ref", null);
   if (filters.search) query = query.ilike("summary", `%${filters.search}%`);
 
   const { data, error } = await query;
@@ -93,6 +107,8 @@ export interface ConversationDetail {
   ended_reason: string | null;
   model: string | null;
   cost_usd: number;
+  /** Written when the conversation ends (agent-server lifecycle.ts); null while it's still open. */
+  summary: string | null;
   verified_customer_company_name: string | null;
   turns: ConversationTurnDetail[];
   ticket: { id: string; category: string; status: string } | null;
@@ -101,7 +117,7 @@ export interface ConversationDetail {
 
 export async function getConversationDetail(id: string): Promise<ConversationDetail | null> {
   const supabase = supabaseAdminClient();
-  const { data: conversation, error } = await supabase.from("conversations").select("id, channel, started_at, ended_at, final_status, ended_reason, model, cost_usd, verified_customer_id").eq("id", id).maybeSingle();
+  const { data: conversation, error } = await supabase.from("conversations").select("id, channel, started_at, ended_at, final_status, ended_reason, model, cost_usd, summary, verified_customer_id").eq("id", id).maybeSingle();
   if (error) throw error;
   if (!conversation) return null;
 
@@ -144,6 +160,7 @@ export async function getConversationDetail(id: string): Promise<ConversationDet
     ended_reason: conversation.ended_reason as string | null,
     model: conversation.model as string | null,
     cost_usd: Number(conversation.cost_usd ?? 0),
+    summary: (conversation.summary as string | null) ?? null,
     verified_customer_company_name: (customer as { company_name?: string } | null)?.company_name ?? null,
     turns: turnsWithDetail,
     ticket: ticket ? { id: ticket.id as string, category: ticket.category as string, status: ticket.status as string } : null,
@@ -167,16 +184,23 @@ export interface CaseItem {
 export interface CaseListFilters {
   kind?: "ticket" | "escalation";
   status?: "open" | "in_progress" | "closed";
+  source?: ConversationSource;
+}
+
+/** Filters a ticket or escalation query by its conversation's source. */
+function bySource<Q extends { not: (column: string, operator: string, value: null) => Q; is: (column: string, value: null) => Q }>(query: Q, source: ConversationSource): Q {
+  return source === "customers" ? query.not("conversations.caller_ref", "is", null) : query.is("conversations.caller_ref", null);
 }
 
 export async function listCases(filters: CaseListFilters = {}): Promise<CaseItem[]> {
   const supabase = supabaseAdminClient();
   const wantTickets = !filters.kind || filters.kind === "ticket";
   const wantEscalations = !filters.kind || filters.kind === "escalation";
+  const source = filters.source ?? "customers";
 
   const [ticketsResult, escalationsResult] = await Promise.all([
-    wantTickets ? supabase.from("support_tickets").select("id, conversation_id, category, status, summary, customer_id, created_at, updated_at").order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
-    wantEscalations ? supabase.from("escalations").select("id, conversation_id, category, status, reason, customer_id, callback_time, created_at, updated_at").order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
+    wantTickets ? bySource(supabase.from("support_tickets").select("id, conversation_id, category, status, summary, customer_id, created_at, updated_at, conversations!inner(caller_ref)"), source).order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
+    wantEscalations ? bySource(supabase.from("escalations").select("id, conversation_id, category, status, reason, customer_id, callback_time, created_at, updated_at, conversations!inner(caller_ref)"), source).order("created_at", { ascending: false }) : Promise.resolve({ data: [], error: null }),
   ]);
   if (ticketsResult.error) throw ticketsResult.error;
   if (escalationsResult.error) throw escalationsResult.error;

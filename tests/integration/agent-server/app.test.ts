@@ -12,7 +12,7 @@ import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import { createApp } from "../../../agent-server/src/app";
 import { SessionManager } from "../../../agent-server/src/session-manager";
 import type { SessionOptions } from "../../../agent-server/src/session";
-import { issueConversationToken } from "@core/agent/conversation-token";
+import { issueConversationToken, verifyConversationToken } from "@core/agent/conversation-token";
 import { serviceRoleClient, anonClient } from "../helpers/db";
 
 const CONVERSATION_TOKEN_SECRET = "test-conversation-token-secret";
@@ -311,6 +311,20 @@ describe("POST /api/text", () => {
     const res = await fetch(`${baseUrl}/api/text`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: conversation.conversation_id, token: conversation.token, message }) });
     return { status: res.status, body: res.headers.get("content-type")?.includes("json") ? ((await res.json()) as Record<string, unknown>) : await res.text() };
   }
+
+  it("hands back a fresh conversation token with every message, so a chat outlasting the 20-minute token keeps working", async () => {
+    const { body } = await createConversation(await newCallerToken(), "web_text");
+    const res = await fetch(`${baseUrl}/api/text`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: body.conversation_id, token: body.token, message: "x".repeat(1001) }) });
+    const fresh = res.headers.get("x-conversation-token");
+    expect(fresh).toBeTruthy();
+    expect(verifyConversationToken(CONVERSATION_TOKEN_SECRET, fresh!, body.conversation_id as string)).toBe(true);
+    expect(res.headers.get("access-control-expose-headers")).toContain("X-Conversation-Token");
+    // An old token that's already expired is still refused - only a valid one earns a fresh one.
+    const expired = issueConversationToken(CONVERSATION_TOKEN_SECRET, body.conversation_id as string, Date.now() - 21 * 60_000);
+    const refused = await fetch(`${baseUrl}/api/text`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: body.conversation_id, token: expired, message: "hi" }) });
+    expect(refused.status).toBe(401);
+    expect(refused.headers.get("x-conversation-token")).toBeNull();
+  });
 
   it("refuses a message over 1,000 characters with 413, before any Claude call", async () => {
     const { body } = await createConversation(await newCallerToken(), "web_text");

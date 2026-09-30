@@ -16,7 +16,7 @@ export default async function OverviewPage() {
         <div className={CARD_CLASSES}>
           <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
             <MessageSquare className="h-4 w-4" aria-hidden="true" />
-            <p className="text-xs">Today&apos;s conversations</p>
+            <p className="text-xs">Today&apos;s customer conversations</p>
           </div>
           <p className="mt-2 text-3xl font-semibold text-[var(--color-text)]">{overview.todaysConversationCount}</p>
         </div>

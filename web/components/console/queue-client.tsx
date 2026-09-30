@@ -21,6 +21,13 @@ export function QueueClient({ initialCases }: { initialCases: CaseItem[] }) {
   const openCaseId = searchParams.get("case");
   const openCase = useMemo(() => cases.find((c) => c.id === openCaseId) ?? null, [cases, openCaseId]);
 
+  // Keeps the Customers / Evaluation runs tab when opening a case.
+  function caseUrl(caseId: string): string {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("case", caseId);
+    return `/console/queue?${params.toString()}`;
+  }
+
   async function handleStatusChange(item: CaseItem, newStatus: CaseItem["status"]) {
     const result = await updateCaseStatus(item.kind, item.id, newStatus, item.updated_at);
     if (result.ok) {
@@ -64,7 +71,7 @@ export function QueueClient({ initialCases }: { initialCases: CaseItem[] }) {
                     "cursor-pointer border-l-2 [transition:background-color_var(--transition-fast),border-color_var(--transition-fast)]",
                     isOpen ? "border-[var(--color-accent)] bg-[var(--color-surface-hover)]" : "border-transparent hover:bg-[var(--color-surface-hover)]",
                   )}
-                  onClick={() => router.push(`/console/queue?case=${item.id}`)}
+                  onClick={() => router.push(caseUrl(item.id))}
                 >
                   <td className="border-b border-[var(--color-border)] px-3 py-2.5 capitalize">{item.kind}</td>
                   <td className="border-b border-[var(--color-border)] px-3 py-2.5 text-[var(--color-text-muted)]">{item.category}</td>

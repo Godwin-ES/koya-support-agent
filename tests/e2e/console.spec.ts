@@ -36,7 +36,7 @@ async function signIn(page: import("@playwright/test").Page) {
 }
 
 async function seedTicket(): Promise<{ conversationId: string; ticketId: string; updatedAt: string }> {
-  const { data: conversation, error: convError } = await admin.from("conversations").insert({ channel: "web_text" }).select("id").single();
+  const { data: conversation, error: convError } = await admin.from("conversations").insert({ channel: "web_text", caller_ref: "e2e-console-customer" }).select("id").single(); // a customer's conversation - the queue shows customers by default, evaluation runs (no account) on their own tab
   if (convError) throw convError;
   const { data: ticket, error: ticketError } = await admin.from("support_tickets").insert({ conversation_id: conversation.id, category: "payment", priority: "medium", summary: "e2e test ticket" }).select("id, updated_at").single();
   if (ticketError) throw ticketError;

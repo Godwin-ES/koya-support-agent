@@ -1,6 +1,8 @@
 /**
- * Stores the worker-down watchdog's secrets (migration 012) in Supabase
- * Vault, from the environment: DISCORD_ALERTS_WEBHOOK_URL and APP_URL.
+ * Stores the database-side alerts' secrets in Supabase Vault, from the
+ * environment: DISCORD_ALERTS_WEBHOOK_URL and APP_URL (the stuck-call
+ * watchdog, migration 012), and AGENT_SERVER_HEALTH_URL (the backend health
+ * check, migration 016 - e.g. https://<backend host>/health; optional).
  * Run it once per environment, e.g. at deploy:
  *
  *   node scripts/set-alert-secrets.mjs          # set or update both
@@ -17,6 +19,7 @@ const pg = require("pg");
 
 const clear = process.argv.includes("--clear");
 const secrets = { discord_alerts_webhook: process.env.DISCORD_ALERTS_WEBHOOK_URL ?? "", app_url: process.env.APP_URL ?? "" };
+if (process.env.AGENT_SERVER_HEALTH_URL || clear) secrets.agent_server_health_url = process.env.AGENT_SERVER_HEALTH_URL ?? "";
 if (!clear && !secrets.discord_alerts_webhook) {
   console.error("DISCORD_ALERTS_WEBHOOK_URL is not set - nothing to store.");
   process.exit(1);

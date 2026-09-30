@@ -71,6 +71,10 @@ export function useTextChat(accessToken: string) {
         } catch {
           throw new ChatSendError("unavailable");
         }
+        // A fresh token comes back with every message, so a long chat never
+        // outlives its token.
+        const freshToken = res.headers.get("X-Conversation-Token");
+        if (freshToken && conversationRef.current) conversationRef.current = { ...conversationRef.current, token: freshToken };
         if (!res.ok || !res.body) {
           const code = res.ok ? "unavailable" : await errorCodeFrom(res);
           setTurns((prev) => prev.slice(0, -1));

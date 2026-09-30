@@ -36,6 +36,8 @@ import { finalizeConversation } from "./lifecycle";
 import { OpsNotifier } from "./ops";
 import { poolFor, SessionCapacityError, SessionManager } from "./session-manager";
 
+export const CONVERSATION_TOKEN_HEADER = "X-Conversation-Token";
+
 export interface AppDeps {
   supabase: SupabaseClient;
   sessionManager: SessionManager;
@@ -68,6 +70,9 @@ export function createApp(deps: AppDeps) {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    // /api/text hands back a fresh conversation token in this header; the
+    // browser can only read a cross-origin response header it's told about.
+    res.header("Access-Control-Expose-Headers", CONVERSATION_TOKEN_HEADER);
     if (req.method === "OPTIONS") {
       res.sendStatus(204);
       return;
@@ -273,6 +278,10 @@ export function createApp(deps: AppDeps) {
       return;
     }
     const conversationId = body.conversation_id;
+    // Tokens last 20 minutes - sized for a 5-minute call. A chat has no time
+    // limit, so every message gets a fresh one back and an active chat never
+    // expires mid-conversation (it used to fail after 20 minutes).
+    res.setHeader(CONVERSATION_TOKEN_HEADER, issueConversationToken(deps.conversationTokenSecret, conversationId));
 
     const { data: conversation, error } = await supabase.from("conversations").select("caller_ref, ended_at").eq("id", conversationId).maybeSingle();
     if (error || !conversation) {

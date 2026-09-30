@@ -1,21 +1,29 @@
 import Link from "next/link";
 import { ANSWER_PATH } from "@core/domain/status";
-import { listConversations } from "@/lib/server/console-data";
+import { listConversations, parseSource } from "@/lib/server/console-data";
+import { SourceTabs } from "@/components/console/source-tabs";
 import { StatusBadge } from "@/components/primitives/status-badge";
 import { EmptyState } from "@/components/primitives/async-state";
 
 /** "Started, channel, duration, paths taken, outcome, escalated or ticketed, cost" (SYSTEM-DESIGN.md §11.1, §11.8). */
-export default async function ConversationsPage({ searchParams }: { searchParams: Promise<{ channel?: string; escalated?: string }> }) {
+export default async function ConversationsPage({ searchParams }: { searchParams: Promise<{ channel?: string; escalated?: string; source?: string }> }) {
   const params = await searchParams;
-  const conversations = await listConversations({ channel: params.channel, escalated: params.escalated === "true" ? true : undefined });
+  const source = parseSource(params.source);
+  const conversations = await listConversations({ channel: params.channel, escalated: params.escalated === "true" ? true : undefined, source });
 
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-lg font-semibold text-[var(--color-text)]">Conversations</h1>
-      <p className="text-sm text-[var(--color-text-muted)]">{conversations.length} result{conversations.length === 1 ? "" : "s"}</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <SourceTabs basePath="/console/conversations" current={source} />
+        <p className="text-sm text-[var(--color-text-muted)]">
+          {conversations.length} {source === "customers" ? "customer conversation" : "evaluation conversation"}
+          {conversations.length === 1 ? "" : "s"}
+        </p>
+      </div>
 
       {conversations.length === 0 ? (
-        <EmptyState message="No conversations yet. New calls and text sessions appear here as they happen." />
+        <EmptyState message={source === "customers" ? "No customer conversations yet. New calls and chats appear here as they happen." : "No evaluation runs yet."} />
       ) : (
         <div className="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-sm)]">
           <table className="w-full border-collapse text-sm">

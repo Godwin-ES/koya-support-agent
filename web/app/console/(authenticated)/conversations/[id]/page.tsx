@@ -18,6 +18,10 @@ export default async function ConversationDetailPage({ params }: { params: Promi
       <div>
         <h1 className="text-lg font-semibold text-[var(--color-text)]">Conversation</h1>
         <div className="mt-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[var(--shadow-sm)]">
+          <div className="mb-4 border-b border-[var(--color-border)] pb-4">
+            <p className="text-xs font-medium text-[var(--color-text-muted)]">Summary</p>
+            <p className="mt-1 text-sm leading-relaxed text-[var(--color-text)]">{conversation.summary ?? (conversation.ended_at ? "No summary recorded." : "In progress - the summary is written when the conversation ends.")}</p>
+          </div>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-4">
             <div>
               <dt className="text-xs text-[var(--color-text-muted)]">Channel</dt>
