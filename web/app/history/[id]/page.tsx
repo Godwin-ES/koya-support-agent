@@ -41,6 +41,14 @@ export default async function HistoryDetailPage({ params }: { params: Promise<{ 
             </div>
             <OutcomeBadge outcome={detail.outcome} inProgress={detail.inProgress} />
           </div>
+          {detail.inProgress && detail.channel === "web_text" && (
+            <div className="flex flex-col gap-3 border-b border-[var(--color-border)] bg-[var(--color-accent-softer)] px-5 py-3.5 sm:flex-row sm:items-center">
+              <p className="flex-1 text-sm text-[var(--color-text)]">This chat is still open. Pick up where you left off.</p>
+              <Link href={`/?chat=${detail.id}`} className="inline-flex items-center justify-center gap-2 rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-white shadow-[var(--shadow-sm)] hover:bg-[var(--color-accent-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]">
+                Continue this chat
+              </Link>
+            </div>
+          )}
           <MessageThread
             messages={detail.messages}
             userInitials={initials}

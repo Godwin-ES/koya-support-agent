@@ -1,5 +1,5 @@
 // The evaluation runner (SYSTEM-DESIGN.md §8, IMPLEMENTATION-PLAN.md Task 12):
-// runs the 9 PRD scenarios plus 6 variants through the real agent over the
+// runs the 9 PRD scenarios plus 7 variants through the real agent over the
 // text channel (the already-running agent-server + mcp-server), checks the
 // recorded behaviour against assertions, writes `evaluations` rows, and
 // prints the testing-evidence markdown table.

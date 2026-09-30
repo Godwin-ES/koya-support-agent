@@ -15,6 +15,7 @@ import { createSupportTicket } from "@core/mcp/tools/create-support-ticket";
 import { logConversationEvent } from "@core/mcp/tools/log-conversation-event";
 import { lookupCustomer } from "@core/mcp/tools/lookup-customer";
 import { lookupPayout } from "@core/mcp/tools/lookup-payout";
+import { listAccountActivity } from "@core/mcp/tools/list-account-activity";
 import { lookupTransaction } from "@core/mcp/tools/lookup-transaction";
 
 const supabase: SupabaseClient = serviceRoleClient();
@@ -55,6 +56,7 @@ describe("account binding - a caller only ever sees their own records", () => {
     expect(await lookupCustomer(context, { company_name: "LagosLedger", contact_name: "Amara" })).toMatchObject({ found: false, reason: "no_customer_account" });
     expect(await lookupTransaction(context, { transaction_id: "TXN-9001" })).toMatchObject({ found: false, reason: "no_customer_account" });
     expect(await lookupPayout(context, { payout_id: "PAY-7001" })).toMatchObject({ found: false, reason: "no_customer_account" });
+    expect(await listAccountActivity(context)).toMatchObject({ found: false, reason: "no_customer_account" });
   });
 
   it("never returns the internal support_notes text, only a derived guidance", async () => {
@@ -91,6 +93,18 @@ describe("account binding - a caller only ever sees their own records", () => {
     await signInAs("CUS-1004");
     expect(await lookupPayout(context, { transaction_id: "TXN-9004" })).toMatchObject({ found: true, payout_id: "PAY-7003", support_summary: "Payout is failed. Reason: beneficiary details need review." });
     expect(await lookupPayout(context, { payout_id: "PAY-7001" })).toMatchObject({ found: false, reason: "not_on_this_account" });
+  });
+
+  it("list_account_activity: only the signed-in customer's own transactions and payouts, customer-safe, with what needs attention counted", async () => {
+    await signInAs("CUS-1004");
+    const result = await listAccountActivity(context);
+    expect(result).toMatchObject({ found: true, transactions: [{ transaction_id: "TXN-9004" }], payouts: [{ payout_id: "PAY-7003", support_summary: "Payout is failed. Reason: beneficiary details need review." }] });
+    if (!result.found) throw new Error("expected activity");
+    expect(result.needs_attention).toBeGreaterThanOrEqual(1);
+    expect(JSON.stringify(result)).not.toMatch(/recipient|CUS-100[^4]/);
+    await signInAs("CUS-1003");
+    const efua = await listAccountActivity(context);
+    expect(efua).toMatchObject({ found: true, transactions: [{ transaction_id: "TXN-9003", guidance: "escalate" }] });
   });
 
   it("tickets and escalations are filed against the signed-in customer, whatever customer_id the model passes, and use the account's name and email", async () => {

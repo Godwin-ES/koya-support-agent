@@ -68,3 +68,25 @@ export async function getHistoryDetail(callerRef: string, conversationId: string
   ]);
   return { ...item, messages };
 }
+
+export interface OpenChat {
+  id: string;
+  messages: HistoryDetail["messages"];
+}
+
+/**
+ * The account's chat that's still open - the one to put back on screen after
+ * a refresh or from History's "Continue". With no id, the most recent one.
+ * Its conversation token isn't issued here: agent-server hands one over
+ * (POST /api/conversations/resume) when the next message is sent.
+ */
+export async function getOpenChat(callerRef: string, conversationId?: string): Promise<OpenChat | null> {
+  if (conversationId && !/^[0-9a-f-]{36}$/i.test(conversationId)) conversationId = undefined;
+  let query = supabaseAdminClient().from("conversations").select("id").eq("caller_ref", callerRef).eq("channel", "web_text").is("ended_at", null);
+  if (conversationId) query = query.eq("id", conversationId);
+  const { data, error } = await query.order("started_at", { ascending: false }).limit(1).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const detail = await getHistoryDetail(callerRef, data.id as string);
+  return detail ? { id: detail.id, messages: detail.messages } : null;
+}

@@ -7,6 +7,7 @@ export * from "./tools/search-knowledge";
 export * from "./tools/lookup-customer";
 export * from "./tools/lookup-transaction";
 export * from "./tools/lookup-payout";
+export * from "./tools/list-account-activity";
 export * from "./tools/create-support-ticket";
 export * from "./tools/create-escalation";
 export * from "./tools/log-conversation-event";

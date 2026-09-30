@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Headset, Keyboard, Mic, Phone, PhoneOff } from "lucide-react";
 import { deriveCallActions, type CallState } from "@core/domain/call-actions";
 import { useVoiceCall } from "@/lib/use-voice-call";
@@ -16,6 +16,7 @@ import { CallHeadline, CallLimitMeter, CallNotice, TimerPill } from "@/component
 import { EndOfCallSummary } from "@/components/voice/end-of-call-summary";
 import { PrivacyNote } from "@/components/voice/privacy-note";
 import { TextFallback } from "@/components/voice/text-fallback";
+import type { ResumedChat } from "@/lib/use-text-chat";
 
 const IN_CALL: CallState[] = ["requesting", "connecting", "listening", "agent_speaking", "ending"];
 
@@ -26,13 +27,15 @@ export interface VoicePageClientProps {
   userEmail?: string | null;
   /** First name to greet by. */
   greetingName?: string | null;
+  /** A chat still open from before a refresh - shown instead of the start screen. */
+  openChat?: ResumedChat | null;
 }
 
 /** The voice page (SYSTEM-DESIGN.md §11.7) - the one screen customers see, once signed in. */
-export function VoicePageClient({ accessToken, onSignOut, userName = null, userEmail = null, greetingName = null }: VoicePageClientProps) {
+export function VoicePageClient({ accessToken, onSignOut, userName = null, userEmail = null, greetingName = null, openChat = null }: VoicePageClientProps) {
   const voiceGreeting = greetingName ? `Hi ${greetingName}, thanks for calling RelayPay support. How can I help you today?` : undefined;
   const { callState, fullTranscript, partial = null, endOfCallSummary, remainingSeconds, startCall, endCall, subscribeToVolume } = useVoiceCall(accessToken, { greeting: voiceGreeting });
-  const [textMode, setTextMode] = useState(false);
+  const [textMode, setTextMode] = useState(openChat !== null);
   const [textDraft, setTextDraft] = useState<string | undefined>(undefined);
   const [hasStartedBefore, setHasStartedBefore] = useState(false);
   const callLimit = useUsageLimits(accessToken, callState)?.calls ?? null;
@@ -43,6 +46,18 @@ export function VoicePageClient({ accessToken, onSignOut, userName = null, userE
   const firstName = greetingName;
   const initials = initialsFrom(userName, userEmail);
   const hasConversation = fullTranscript.length > 0 || partial !== null || isActive || callState === "ending";
+
+  // A refresh or a closed tab ends a call for good - there's no way back into
+  // it - so the browser asks first. (Browsers show their own wording.)
+  useEffect(() => {
+    if (!inCall) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [inCall]);
 
   function handleStart() {
     setHasStartedBefore(true);
@@ -66,7 +81,7 @@ export function VoicePageClient({ accessToken, onSignOut, userName = null, userE
         <h1 className="sr-only">RelayPay Support</h1>
 
         {textMode ? (
-          <TextFallback accessToken={accessToken} onSwitchToVoice={() => setTextMode(false)} initialDraft={textDraft} userInitials={initials} firstName={firstName} />
+          <TextFallback accessToken={accessToken} resume={openChat} onSwitchToVoice={() => setTextMode(false)} initialDraft={textDraft} userInitials={initials} firstName={firstName} />
         ) : hasConversation ? (
           <div className="grid flex-1 animate-fade-in items-start gap-5 lg:grid-cols-[340px_minmax(0,1fr)] lg:gap-6">
             <aside aria-label="Call controls" className="flex flex-col gap-5 rounded-[var(--radius-2xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[var(--shadow-md)] lg:sticky lg:top-24 lg:items-center lg:p-7 lg:text-center">

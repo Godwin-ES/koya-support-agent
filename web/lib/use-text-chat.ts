@@ -7,6 +7,12 @@ export interface TextTurn {
   text: string;
 }
 
+/** A chat that was still open when the page loaded: its id and what was said, without a token yet. */
+export interface ResumedChat {
+  id: string;
+  messages: TextTurn[];
+}
+
 /** Why a message couldn't be sent - agent-server's own refusal codes, plus the two network cases. */
 export type ChatErrorCode = "message_too_long" | "reply_in_progress" | "conversation_message_limit" | "chat_daily_limit" | "conversation_ended" | "busy" | "unavailable";
 
@@ -29,8 +35,9 @@ async function errorCodeFrom(res: Response): Promise<ChatErrorCode> {
 }
 
 /** The text fallback (SYSTEM-DESIGN.md §11.7, §3: "the same session code, streaming to the browser instead of Vapi, channel = web_text"). `accessToken` is the signed-in caller's Supabase session token. */
-export function useTextChat(accessToken: string) {
-  const [turns, setTurns] = useState<TextTurn[]>([]);
+export function useTextChat(accessToken: string, resume?: ResumedChat | null) {
+  const [turns, setTurns] = useState<TextTurn[]>(resume?.messages ?? []);
+  const resumeIdRef = useRef<string | null>(resume?.id ?? null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isEnded, setIsEnded] = useState(false);
   const conversationRef = useRef<{ id: string; token: string } | null>(null);
@@ -38,6 +45,23 @@ export function useTextChat(accessToken: string) {
   const ensureConversation = useCallback(async (): Promise<{ id: string; token: string }> => {
     if (conversationRef.current) return conversationRef.current;
     let res: Response;
+    if (resumeIdRef.current) {
+      // Carrying on an open chat: agent-server checks this account owns it and it's still open, then issues its token.
+      try {
+        res = await fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/conversations/resume`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ access_token: accessToken, conversation_id: resumeIdRef.current }),
+        });
+      } catch {
+        throw new ChatSendError("unavailable");
+      }
+      if (res.status === 404) throw new ChatSendError("conversation_ended");
+      if (!res.ok) throw new ChatSendError(await errorCodeFrom(res));
+      const resumed = (await res.json()) as { conversation_id: string; token: string };
+      conversationRef.current = { id: resumed.conversation_id, token: resumed.token };
+      return conversationRef.current;
+    }
     try {
       res = await fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/conversations`, {
         method: "POST",
@@ -112,15 +136,18 @@ export function useTextChat(accessToken: string) {
   );
 
   const endConversation = useCallback(async () => {
-    const conversation = conversationRef.current;
-    if (!conversation) return;
+    const conversation = conversationRef.current ?? (resumeIdRef.current ? await ensureConversation().catch(() => null) : null);
+    if (!conversation) {
+      if (resumeIdRef.current) setIsEnded(true);
+      return;
+    }
     await fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/text/end`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversation_id: conversation.id, token: conversation.token }),
     });
     setIsEnded(true);
-  }, []);
+  }, [ensureConversation]);
 
   const messagesSent = turns.filter((t) => t.role === "user").length;
   return { turns, isStreaming, isEnded, hasSentAMessage: turns.length > 0, messagesSent, sendMessage, endConversation };

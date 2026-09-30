@@ -201,6 +201,39 @@ export function createApp(deps: AppDeps) {
     }
   });
 
+  // -- POST /api/conversations/resume ----------------------------------------
+  // Back into an open chat after a refresh, a closed tab or another device:
+  // the page only ever held the conversation's token in memory. The signed-in
+  // account must own the conversation, and it must be a chat that hasn't
+  // ended (the inactivity sweep ends one after 15 minutes). With no
+  // conversation_id, it's the account's most recent open chat. The session
+  // itself is rebuilt from the recorded turns on the next message.
+  app.post("/api/conversations/resume", async (req: Request, res: Response) => {
+    const body = req.body as { access_token?: string; conversation_id?: string };
+    const callerRef = await verifyCaller(body.access_token);
+    if (!callerRef) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    try {
+      let query = supabase.from("conversations").select("id").eq("caller_ref", callerRef).eq("channel", "web_text").is("ended_at", null);
+      if (body.conversation_id) query = query.eq("id", body.conversation_id);
+      const { data: open, error } = await query.order("started_at", { ascending: false }).limit(1).maybeSingle();
+      if (error) throw error;
+      if (!open) {
+        res.status(404).json({ error: "no_open_chat" });
+        return;
+      }
+      const conversationId = open.id as string;
+      const { data: turns, error: turnsError } = await supabase.from("conversation_turns").select("user_transcript, assistant_response").eq("conversation_id", conversationId).order("seq");
+      if (turnsError) throw turnsError;
+      res.json({ conversation_id: conversationId, token: issueConversationToken(deps.conversationTokenSecret, conversationId), turns: turns ?? [] });
+    } catch (err) {
+      console.error("POST /api/conversations/resume failed:", err);
+      res.status(500).json({ error: "internal error" });
+    }
+  });
+
   // -- GET /api/conversations/:id/outcome -------------------------------------
   // What the end-of-call card shows (SYSTEM-DESIGN.md §11.7): whether this
   // conversation created an escalation or a ticket, its reference, and the

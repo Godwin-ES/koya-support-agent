@@ -372,6 +372,41 @@ describe("POST /api/text/end", () => {
   });
 });
 
+describe("POST /api/conversations/resume", () => {
+  async function resume(accessToken: string, conversationId?: string) {
+    const res = await fetch(`${baseUrl}/api/conversations/resume`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ access_token: accessToken, conversation_id: conversationId }) });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  }
+
+  it("hands the owner back their open chat - a fresh token and the turns so far - and a message then continues it", async () => {
+    const accessToken = await newCallerToken();
+    const { body } = await createConversation(accessToken, "web_text");
+    await supabase.from("conversation_turns").insert({ conversation_id: body.conversation_id, seq: 1, user_transcript: "What are your fees?", assistant_response: "They depend on the corridor.", answer_type: "answer" });
+
+    const resumed = await resume(accessToken);
+    expect(resumed.status).toBe(200);
+    expect(resumed.body).toMatchObject({ conversation_id: body.conversation_id, turns: [{ user_transcript: "What are your fees?", assistant_response: "They depend on the corridor." }] });
+    expect(verifyConversationToken(CONVERSATION_TOKEN_SECRET, resumed.body.token as string, body.conversation_id as string)).toBe(true);
+
+    const next = await fetch(`${baseUrl}/api/text`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: resumed.body.conversation_id, token: resumed.body.token, message: "And for Kenya?" }) });
+    expect(next.status).toBe(200);
+    await next.text();
+  }, 20_000);
+
+  it("never hands over another account's chat, an ended one, or a call", async () => {
+    const owner = await newCallerToken();
+    const { body: chat } = await createConversation(owner, "web_text");
+    expect((await resume(await newCallerToken(), chat.conversation_id as string)).status).toBe(404);
+
+    await fetch(`${baseUrl}/api/text/end`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: chat.conversation_id, token: chat.token }) });
+    expect((await resume(owner, chat.conversation_id as string)).status).toBe(404);
+
+    const { body: call } = await createConversation(owner, "web_voice");
+    expect((await resume(owner, call.conversation_id as string)).status).toBe(404);
+    expect((await resume("not-a-real-token")).status).toBe(401);
+  }, 20_000);
+});
+
 describe("POST /vapi/events", () => {
   it("rejects a bad X-Vapi-Server-Secret", async () => {
     const res = await fetch(`${baseUrl}/vapi/events`, { method: "POST", headers: { "Content-Type": "application/json", "x-vapi-server-secret": "wrong" }, body: JSON.stringify({ message: { type: "hang" } }) });

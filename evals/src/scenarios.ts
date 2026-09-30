@@ -31,6 +31,7 @@ export interface EvalScenario {
 const AMARA = "CUS-1001";
 const EFUA = "CUS-1003";
 const PATRICK = "CUS-1005";
+const AMINA = "CUS-1004";
 
 export const PRD_SCENARIOS: EvalScenario[] = [
   {
@@ -140,6 +141,13 @@ export const VARIANT_SCENARIOS: EvalScenario[] = [
     customerId: AMARA,
     turns: ["This is absolutely ridiculous. I've been trying to get help for days and nobody is doing anything. I need this fixed right now."],
     checks: [anyAnswerTypeIs(["escalate"])],
+  },
+  {
+    key: "variant-account-overview",
+    expectedBehavior: "Signed in as Amina, asking what's on her account with no reference: lists her own activity and leads with the failed 800 dollar payout, instead of asking for a reference.",
+    customerId: AMINA,
+    turns: ["I just want to know everything that's going on with my account right now - any transactions or payouts?"],
+    checks: [toolCalled("list_account_activity", "ok"), replyIncludes(/fail/i, "the failed payout"), replyIncludes(/800|eight hundred/i, "its amount"), replyExcludes(/(?:give|share|provide|have) (?:me )?(?:a|the|your) (?:specific )?(?:transaction|payout)? ?(?:reference|id)\b/i, "asking for a reference instead")],
   },
   {
     key: "variant-misheard-reference",

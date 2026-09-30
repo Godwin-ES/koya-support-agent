@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { ArrowUp, CircleCheck, Hourglass, MessageSquarePlus, Phone } from "lucide-react";
 import { deriveTextActions } from "@core/domain/text-actions";
-import { ChatSendError, useTextChat, type ChatErrorCode } from "@/lib/use-text-chat";
+import { ChatSendError, useTextChat, type ChatErrorCode, type ResumedChat } from "@/lib/use-text-chat";
 import { useUsageLimits } from "@/lib/use-usage-limits";
 import { cn } from "@/lib/utils";
 import { ActionButton } from "@/components/primitives/action-button";
@@ -17,12 +17,14 @@ export interface TextFallbackProps {
   initialDraft?: string;
   userInitials?: string;
   firstName?: string | null;
+  /** An open chat to carry on with (after a refresh) - only for the first conversation shown. */
+  resume?: ResumedChat | null;
 }
 
 /** Each "New conversation" remounts the chat, so it starts a fresh server conversation. */
-export function TextFallback({ initialDraft, ...props }: TextFallbackProps) {
+export function TextFallback({ initialDraft, resume, ...props }: TextFallbackProps) {
   const [session, setSession] = useState(0);
-  return <TextChat key={session} {...props} initialDraft={session === 0 ? initialDraft : undefined} onNewConversation={() => setSession((s) => s + 1)} />;
+  return <TextChat key={session} {...props} initialDraft={session === 0 ? initialDraft : undefined} resume={session === 0 ? resume : null} onNewConversation={() => setSession((s) => s + 1)} />;
 }
 
 const MAX_TEXTAREA_PX = 160;
@@ -50,8 +52,8 @@ function resize(el: HTMLTextAreaElement) {
   el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_PX)}px`;
 }
 
-function TextChat({ accessToken, onSwitchToVoice, initialDraft, userInitials = "You", firstName, onNewConversation }: TextFallbackProps & { onNewConversation: () => void }) {
-  const { turns, isStreaming, isEnded, hasSentAMessage, messagesSent, sendMessage, endConversation } = useTextChat(accessToken);
+function TextChat({ accessToken, onSwitchToVoice, initialDraft, userInitials = "You", firstName, resume, onNewConversation }: TextFallbackProps & { onNewConversation: () => void }) {
+  const { turns, isStreaming, isEnded, hasSentAMessage, messagesSent, sendMessage, endConversation } = useTextChat(accessToken, resume);
   const [draft, setDraft] = useState(initialDraft ?? "");
   const [sendError, setSendError] = useState<string | null>(null);
   const [closedBy, setClosedBy] = useState<ClosingCode | null>(null);

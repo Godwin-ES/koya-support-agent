@@ -27,4 +27,32 @@ describe("useTextChat", () => {
     const sentTokens = fetchSpy.mock.calls.slice(1).map(([, init]) => JSON.parse(String((init as RequestInit).body)).token);
     expect(sentTokens).toEqual(["t1", "t2"]);
   });
+
+  it("carries on a resumed chat: shows what was said, and gets its token from resume instead of starting a new conversation", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ conversation_id: "open-1", token: "t1", turns: [] }), { status: 200 }))
+      .mockResolvedValueOnce(reply("t2"));
+    const resume = { id: "open-1", messages: [{ role: "user" as const, text: "What are your fees?" }, { role: "assistant" as const, text: "They depend on the corridor." }] };
+    const { result } = renderHook(() => useTextChat("access-token", resume));
+    expect(result.current.turns).toEqual(resume.messages);
+
+    await act(async () => {
+      await result.current.sendMessage("And for Kenya?");
+    });
+
+    const [resumeUrl, resumeInit] = fetchSpy.mock.calls[0]!;
+    expect(String(resumeUrl)).toMatch(/\/api\/conversations\/resume$/);
+    expect(JSON.parse(String((resumeInit as RequestInit).body))).toEqual({ access_token: "access-token", conversation_id: "open-1" });
+    expect(JSON.parse(String((fetchSpy.mock.calls[1]![1] as RequestInit).body))).toMatchObject({ conversation_id: "open-1", token: "t1" });
+    expect(result.current.turns.map((t) => t.text)).toEqual(["What are your fees?", "They depend on the corridor.", "And for Kenya?", "ok"]);
+  });
+
+  it("a resumed chat the server has since closed reports conversation_ended, so the page offers a new one", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ error: "no_open_chat" }), { status: 404 }));
+    const { result } = renderHook(() => useTextChat("access-token", { id: "open-1", messages: [] }));
+    await act(async () => {
+      await expect(result.current.sendMessage("hello?")).rejects.toMatchObject({ code: "conversation_ended" });
+    });
+  });
 });

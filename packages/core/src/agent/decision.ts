@@ -39,7 +39,7 @@ export interface DecisionRecord {
   knowledge_chunk_ids: string[];
 }
 
-const LOOKUP_TOOLS = new Set(["lookup_customer", "lookup_transaction", "lookup_payout"]);
+const LOOKUP_TOOLS = new Set(["lookup_customer", "lookup_transaction", "lookup_payout", "list_account_activity"]);
 
 /**
  * Inference order, most certain signal first: an escalation actually

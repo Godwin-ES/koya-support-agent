@@ -15,6 +15,7 @@ import {
   createSupportTicket,
   logConversationEvent,
   lookupCustomer,
+  listAccountActivity,
   lookupPayout,
   lookupTransaction,
   matchesConversation,
@@ -82,6 +83,18 @@ export function createServer(context: ToolContext): McpServer {
     },
     async (input) => textResult(await callWithLogging(context, "lookup_payout", "look up a payout the caller referenced", input, async () => {
       const result = await lookupPayout(context, input);
+      return { status: result.found ? "ok" : "not_found", result };
+    })),
+  );
+
+  server.registerTool(
+    "list_account_activity",
+    {
+      description: "List the signed-in caller's own recent transactions and payouts (up to 10 of each), with each one's status - for when they ask what's on their account or what's going on, without a reference. Takes no input: the caller comes from their sign-in.",
+      inputSchema: {},
+    },
+    async () => textResult(await callWithLogging(context, "list_account_activity", "list the caller's recent account activity", {}, async () => {
+      const result = await listAccountActivity(context);
       return { status: result.found ? "ok" : "not_found", result };
     })),
   );
@@ -155,6 +168,7 @@ export const TOOL_NAMES = [
   "lookup_customer",
   "lookup_transaction",
   "lookup_payout",
+  "list_account_activity",
   "create_support_ticket",
   "create_escalation",
   "log_conversation_event",

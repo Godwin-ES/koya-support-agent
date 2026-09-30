@@ -17,7 +17,7 @@ import { claudeFailedMessage, mcpDownMessage, sendDiscordAlert } from "@core/not
 import { DISALLOWED_BUILTIN_TOOLS } from "./disallowed-tools";
 
 const MCP_SERVER_NAME = "relaypay-support";
-const TOOL_NAMES = ["search_knowledge", "lookup_customer", "lookup_transaction", "lookup_payout", "create_support_ticket", "create_escalation", "log_conversation_event"] as const;
+const TOOL_NAMES = ["search_knowledge", "lookup_customer", "lookup_transaction", "lookup_payout", "list_account_activity", "create_support_ticket", "create_escalation", "log_conversation_event"] as const;
 
 // SYSTEM-DESIGN.md §3 step 5, revised after Task 2's measurement: every
 // turn's real thinking-before-anything-is-said time runs 2-5s regardless of
