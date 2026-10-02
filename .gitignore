@@ -20,3 +20,6 @@ tests/fixtures/voice/live/
 *.tmp.ts
 # Task 2 latency-spike measurement output (raw timing data, not evidence itself - the numbers that matter go in BUILD-NOTES.md)
 .spike-results/
+
+# Local Superpowers design and implementation workflow artifacts
+docs/superpowers/
