@@ -43,7 +43,7 @@ export async function getOverview(): Promise<OverviewData> {
 /** Who a conversation or case belongs to, as a support agent would want to read it. */
 export interface Person {
   name: string;
-  /** The company for a customer; "Staff" for a team member. */
+  /** The account's email for a customer; "Staff" for a team member. */
   detail: string | null;
 }
 
@@ -65,9 +65,9 @@ async function loadDirectory(): Promise<Directory> {
 }
 
 function personFor(directory: Directory, callerRef: string | null, customerId: string | null): Person | null {
-  const customer = customerId ? directory.byCustomer.get(customerId) : undefined;
-  if (customer) return { name: customer.contact_name, detail: customer.company_name };
   const account = callerRef ? directory.byAccount.get(callerRef) : undefined;
+  const customer = customerId ? directory.byCustomer.get(customerId) : undefined;
+  if (customer) return { name: customer.contact_name, detail: account?.email ?? null };
   if (account) return { name: account.name ?? account.email ?? "Unknown account", detail: account.staff ? "Staff" : null };
   return null;
 }
