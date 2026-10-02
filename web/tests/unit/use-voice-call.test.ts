@@ -8,6 +8,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useVoiceCall } from "@/lib/use-voice-call";
+import { CallTones } from "@/lib/call-tones";
 
 class StubVapi {
   private listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
@@ -166,14 +167,33 @@ describe("useVoiceCall - timers", () => {
   });
 
   it("a normal hang-up does not report itself as a silence timeout", async () => {
+    const connectTone = vi.spyOn(CallTones.prototype, "startConnecting").mockImplementation(() => {});
+    const stopTone = vi.spyOn(CallTones.prototype, "stopConnecting").mockImplementation(() => {});
+    const hangupTone = vi.spyOn(CallTones.prototype, "playHangup").mockImplementation(() => {});
     const { result } = renderHook(() => useVoiceCall("test-access-token"));
     await act(async () => {
       await result.current.startCall();
     });
+    expect(connectTone).toHaveBeenCalledOnce();
     act(() => stub.emit("call-start"));
+    expect(stopTone).toHaveBeenCalled();
     act(() => result.current.endCall());
 
+    expect(hangupTone).toHaveBeenCalledOnce();
     expect(result.current.endOfCallSummary).toMatchObject({ endedDueToSilence: false });
+  });
+
+  it("moves from Listening to Thinking on the caller's final transcript, then Speaking", async () => {
+    const { result } = renderHook(() => useVoiceCall("test-access-token"));
+    await act(async () => { await result.current.startCall(); });
+    act(() => stub.emit("call-start"));
+    expect(result.current.callState).toBe("listening");
+    act(() => stub.emit("message", { type: "transcript", role: "user", transcript: "Please check that", transcriptType: "final" }));
+    expect(result.current.callState).toBe("agent_thinking");
+    act(() => stub.emit("speech-start"));
+    expect(result.current.callState).toBe("agent_speaking");
+    act(() => stub.emit("speech-end"));
+    expect(result.current.callState).toBe("listening");
   });
 });
 

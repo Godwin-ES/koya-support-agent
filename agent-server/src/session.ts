@@ -1,7 +1,7 @@
 // One conversation's live Agent SDK session (SYSTEM-DESIGN.md §3-4),
 // generalising the Task 2 spike's SpikeSession: a real MCP connection (not
 // an in-process stub), the real system prompt, the voice stream filter,
-// the holding phrase for any slow turn, and per-turn recording to Supabase.
+// and per-turn recording to Supabase.
 //
 // `queryFactory` is injectable so session-manager tests can drive this
 // class with a stubbed SDK (turn order, interrupt, idle close, the
@@ -10,38 +10,15 @@
 import { query, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildSystemPrompt, decideTurn, DecisionTagExtractor, extractEmails, stripDecisionTags, VoiceStreamFilter, type AnswerType, type Channel, type DeclaredDecision } from "@core/agent";
-import { currentTurnSeq, readTurnToolCalls, type ToolContext, createSupportTicket } from "@core/mcp";
+import { currentTurnSeq, readTurnToolCalls, type ToolContext, createSupportTicket, formatCallbackSlot } from "@core/mcp";
 import { AgentFailure, classifyMcpFailure, classifySdkError, CLAUDE_DOWN_FALLBACK, MCP_DOWN_FALLBACK } from "@core/domain/failure";
+import type { SupportActivity } from "@core/domain/call-actions";
 import { RetryBuffer } from "@core/domain/write-buffer";
 import { claudeFailedMessage, mcpDownMessage, sendDiscordAlert } from "@core/notify/discord";
 import { DISALLOWED_BUILTIN_TOOLS } from "./disallowed-tools";
 
 const MCP_SERVER_NAME = "relaypay-support";
 const TOOL_NAMES = ["search_knowledge", "lookup_customer", "lookup_transaction", "lookup_payout", "list_account_activity", "create_support_ticket", "create_escalation", "log_conversation_event"] as const;
-
-// SYSTEM-DESIGN.md §3 step 5, revised after Task 2's measurement: every
-// turn's real thinking-before-anything-is-said time runs 2-5s regardless of
-// a tool call, so the same filler fires whenever no token has arrived
-// within ~900ms of the turn starting - not only the tool-call case it was
-// first written for. Voice only: in text chat the page's typing dots
-// already say "working on it", and a spoken filler read as the start of
-// every reply. Rotated so a caller doesn't hear the same words every
-// turn, and never saved into the recorded reply - it's there to fill
-// silence, not part of the answer. Generic on purpose ("let me check"
-// would be wrong on a turn with no lookup).
-// Back to 900ms (was briefly raised to 2.5s): real production calls showed
-// time to first word still regularly running 2.5-5s, especially on any turn
-// that calls search_knowledge or a lookup before saying anything - so a
-// 2.5s delay meant the caller heard dead air for the full 2.5s on most
-// turns, not just a rare slow one, which read as the agent being
-// unresponsive. The 2.5s change was meant to stop a filler running straight
-// into the real answer with no gap - that's now handled at its actual
-// source instead: every holding phrase already ends with its own ". " (a
-// real sentence break, not a bare word), and the text-block-start handling
-// below inserts a space whenever a reply resumes after a tool call, so the
-// two no longer run together regardless of how soon the real reply starts.
-const HOLDING_DELAY_MS = 900;
-export const HOLDING_PHRASES = ["Okay, one moment. ", "Sure, let's see. ", "Right, just a second. ", "Mm, give me a moment. "] as const;
 
 export type TurnDeltaEvent = { kind: "delta"; text: string };
 export type TurnDoneEvent = {
@@ -63,7 +40,6 @@ export interface SessionOptions {
   mcpServerUrl: string;
   mcpServerToken: string;
   supabase: SupabaseClient;
-  /** Voice gets the spoken holding phrase; text doesn't. Defaults to voice. */
   channel?: Channel;
   /** SYSTEM-DESIGN.md §10: a fresh session for a conversation whose previous one was lost, briefed on what already happened. */
   handoverNote?: string;
@@ -94,10 +70,15 @@ export class Session {
   private readonly pending: SDKUserMessage[] = [];
   private waiter: (() => void) | null = null;
   private _closed = false;
+  private _supportActivity: SupportActivity = null;
 
   /** Whether a prior turn's failure already tore this session's query down (session-manager.ts checks this before reusing a cached session - reusing a closed one silently drops or loses turns, a real bug found in Task 13's live-call verification). */
   get closed(): boolean {
     return this._closed;
+  }
+
+  get supportActivity(): SupportActivity {
+    return this._supportActivity;
   }
   private readonly allowedEmails = new Set<string>();
   // SDKResultSuccess.total_cost_usd is cumulative for the whole query()
@@ -105,8 +86,6 @@ export class Session {
   // the SDK's own doc comment on the field) - tracked here so each turn's
   // own cost_usd is the delta since the previous one, not the running total.
   private cumulativeCostUsd = 0;
-  private readonly speaksHoldingPhrase: boolean;
-  private holdingPhrasesUsed = 0;
   // The one outstanding read of the SDK's message stream, shared across
   // turns. A turn used to start its own read and leave a pre-fetched one
   // dangling when it ended, so the next turn's first message went to the
@@ -124,7 +103,6 @@ export class Session {
     this.conversationId = options.conversationId;
     this.toolContext = { supabase: options.supabase, conversationId: options.conversationId };
     this.writeBuffer = options.writeBuffer ?? new RetryBuffer(options.supabase);
-    this.speaksHoldingPhrase = (options.channel ?? "web_voice") !== "web_text";
 
     const systemPrompt = buildSystemPrompt(new Date()) + (options.handoverNote ?? "");
     const effort = options.effort ?? "low";
@@ -224,6 +202,7 @@ export class Session {
 
   close(): void {
     this._closed = true;
+    this._supportActivity = null;
     this.waiter?.();
   }
 
@@ -247,29 +226,11 @@ export class Session {
     let declared: DeclaredDecision | undefined;
     let assistantResponse = "";
     let firstTokenAt: number | null = null;
-    let holdingSent = false;
     let interrupted = false;
 
     try {
       for (;;) {
-        let result: IteratorResult<SDKMessage, void>;
-
-        if (this.speaksHoldingPhrase && firstTokenAt === null && !holdingSent) {
-          const raced = await Promise.race([
-            this.nextMessage().then((r) => ({ kind: "message" as const, r })),
-            sleep(HOLDING_DELAY_MS).then(() => ({ kind: "timeout" as const })),
-          ]);
-          if (raced.kind === "timeout") {
-            holdingSent = true;
-            firstTokenAt = performance.now();
-            const phrase = HOLDING_PHRASES[this.holdingPhrasesUsed++ % HOLDING_PHRASES.length]!;
-            yield { kind: "delta", text: phrase };
-            continue;
-          }
-          result = raced.r;
-        } else {
-          result = await this.nextMessage();
-        }
+        const result = await this.nextMessage();
         this.consumeMessage();
         if (result.done) break;
         const message = result.value;
@@ -317,6 +278,7 @@ export class Session {
         }
 
         if (message.type === "stream_event" && message.event.type === "content_block_delta" && message.event.delta.type === "text_delta") {
+          this._supportActivity = null;
           if (firstTokenAt === null) firstTokenAt = performance.now();
           const text = filter.push(decisionTag.push(message.event.delta.text));
           assistantResponse += message.event.delta.text;
@@ -328,6 +290,15 @@ export class Session {
           for (const block of message.message.content) {
             if (block.type === "tool_use") {
               const name = stripMcpPrefix(block.name);
+              const input = block.input && typeof block.input === "object" ? block.input as Record<string, unknown> : {};
+              if (input.confirmed === true && name === "create_support_ticket") {
+                this._supportActivity = { kind: "ticket", label: "Creating ticket" };
+              } else if (input.confirmed === true && name === "create_escalation") {
+                const preferredTime = typeof input.preferred_time === "string" ? input.preferred_time : null;
+                this._supportActivity = preferredTime
+                  ? { kind: "booking", label: `Setting booking for ${formatCallbackSlot(preferredTime)}` }
+                  : { kind: "escalation", label: "Creating escalation" };
+              }
               if (name === "log_conversation_event" && block.input && typeof block.input === "object" && "metadata" in block.input) {
                 const metadata = (block.input as { metadata?: unknown }).metadata;
                 if (metadata && typeof metadata === "object" && "answer_type" in metadata) {
@@ -340,6 +311,7 @@ export class Session {
         }
 
         if (message.type === "result") {
+          this._supportActivity = null;
           // SDKResultError (SYSTEM-DESIGN.md §10: "Claude down or erroring
           // mid-call") - the turn technically completed (the SDK didn't
           // throw), but produced no usable reply. Handled the same way as
@@ -430,6 +402,7 @@ export class Session {
    * closed one - the conversation carries on cleanly either way.
    */
   private async *handleClaudeFailure(userText: string, failure: AgentFailure): AsyncGenerator<TurnEvent> {
+    this._supportActivity = null;
     const isMcp = failure.provider === "mcp";
     const fallbackText = isMcp ? MCP_DOWN_FALLBACK : CLAUDE_DOWN_FALLBACK;
     yield { kind: "delta", text: fallbackText };

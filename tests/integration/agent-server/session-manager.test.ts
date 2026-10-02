@@ -55,7 +55,11 @@ function failedResultMessage(subtype = "error_during_execution"): SDKMessage {
   return { type: "result", subtype, duration_ms: 10, is_error: true, num_turns: 1, errors: [] } as unknown as SDKMessage;
 }
 
-/** Like scriptedQueryFactory, but the first message arrives only after `delayMs` - long enough for the holding phrase's 900ms timer. */
+function toolUseMessage(name: string, input: Record<string, unknown>): SDKMessage {
+  return { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "tool-1", name: `mcp__relaypay-support__${name}`, input }] } } as unknown as SDKMessage;
+}
+
+/** Like scriptedQueryFactory, but the first message arrives only after `delayMs`. */
 function slowFirstReplyFactory(script: SDKMessage[], delayMs: number): NonNullable<SessionOptions["queryFactory"]> {
   return () => {
     let index = 0;
@@ -70,7 +74,7 @@ function slowFirstReplyFactory(script: SDKMessage[], delayMs: number): NonNullab
   };
 }
 
-describe("the holding phrase", () => {
+describe("slow turns", () => {
   async function runSlowTurn(channel: "web_voice" | "web_text") {
     const conversationId = await newConversation();
     const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", queryFactory: slowFirstReplyFactory([textDelta("Fees depend on the corridor."), resultMessage()], 3_000) });
@@ -81,10 +85,9 @@ describe("the holding phrase", () => {
     return { spoken: deltas.join(""), recorded: data?.assistant_response };
   }
 
-  it("fills a slow voice turn with a short phrase, but never saves it into the recorded reply", async () => {
+  it("does not inject spoken filler into a slow voice turn", async () => {
     const { spoken, recorded } = await runSlowTurn("web_voice");
-    expect(spoken).not.toBe("Fees depend on the corridor.");
-    expect(spoken.endsWith("Fees depend on the corridor.")).toBe(true);
+    expect(spoken).toBe("Fees depend on the corridor.");
     expect(recorded).toBe("Fees depend on the corridor.");
   }, 10_000);
 
@@ -93,6 +96,56 @@ describe("the holding phrase", () => {
     expect(spoken).toBe("Fees depend on the corridor.");
     expect(recorded).toBe("Fees depend on the corridor.");
   }, 10_000);
+});
+
+describe("meaningful support activity", () => {
+  it("shows a confirmed booking with its full slot, then clears it when answer text resumes", async () => {
+    const conversationId = await newConversation();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const script = [
+      toolUseMessage("create_escalation", { confirmed: true, preferred_time: "2026-10-05T14:00:00+01:00" }),
+      textDelta("Your callback is booked."),
+      resultMessage(),
+    ];
+    const manager = new SessionManager({
+      supabase,
+      mcpServerUrl: "http://127.0.0.1:8090/mcp",
+      mcpServerToken: "test-token",
+      model: "claude-haiku-4-5",
+      queryFactory: () => {
+        let index = 0;
+        return {
+          next: async () => {
+            if (index === 1) await gate;
+            return { done: false as const, value: script[index++]! };
+          },
+          interrupt: async () => {},
+        } as unknown as Query;
+      },
+    });
+    const session = await manager.getOrCreate(conversationId, "web_voice");
+    const iterator = session.runTurn("Yes, book it");
+    const firstDelta = iterator.next();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(manager.activityOf(conversationId)).toEqual({ kind: "booking", label: "Setting booking for Monday, October 5 at 2:00 PM WAT" });
+    release();
+    expect(await firstDelta).toMatchObject({ value: { kind: "delta", text: "Your callback is booked." } });
+    expect(manager.activityOf(conversationId)).toBeNull();
+    await iterator.next();
+  });
+
+  it("does not surface private lookups or unconfirmed proposals", async () => {
+    const conversationId = await newConversation();
+    const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", queryFactory: scriptedQueryFactory([
+      toolUseMessage("lookup_transaction", { transaction_id: "TXN-9001" }),
+      toolUseMessage("create_support_ticket", { confirmed: false }),
+      textDelta("Please confirm."),
+      resultMessage(),
+    ]) });
+    const session = await manager.getOrCreate(conversationId);
+    for await (const _event of session.runTurn("Help")) expect(manager.activityOf(conversationId)).toBeNull();
+  });
 });
 
 describe("the decision tag", () => {

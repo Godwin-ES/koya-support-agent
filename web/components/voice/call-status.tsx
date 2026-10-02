@@ -49,6 +49,7 @@ export function CallNotice({ callState, statusLine, className }: { callState: Ca
 
 const HEADLINES: Partial<Record<CallState, string>> = {
   listening: "Go ahead, we're listening.",
+  agent_thinking: "Working on your answer.",
   agent_speaking: "RelayPay is answering.",
   requesting: "Setting up a secure line.",
   connecting: "Setting up a secure line.",
@@ -59,7 +60,7 @@ const HEADLINES: Partial<Record<CallState, string>> = {
 export function CallHeadline({ callState, statusLine, className }: { callState: CallState; statusLine: string; className?: string }) {
   const gloss = HEADLINES[callState];
   if (!gloss) return null;
-  const live = callState === "listening" || callState === "agent_speaking";
+  const live = callState === "listening" || callState === "agent_thinking" || callState === "agent_speaking";
   return (
     <div className={cn("min-w-0", className)}>
       <p className="flex items-center gap-2 text-lg font-semibold text-[var(--color-text)] lg:justify-center">

@@ -4,7 +4,9 @@
 // control the state doesn't allow.
 import { disabled, enabled, HIDDEN, type ActionState } from "./action-state";
 
-export type CallState = "idle" | "requesting" | "connecting" | "listening" | "agent_speaking" | "ending" | "ended" | "mic_blocked" | "limit_reached" | "busy" | "unavailable" | "dropped";
+export type CallState = "idle" | "requesting" | "connecting" | "listening" | "agent_thinking" | "agent_speaking" | "ending" | "ended" | "mic_blocked" | "limit_reached" | "busy" | "unavailable" | "dropped";
+
+export type SupportActivity = { kind: "ticket" | "escalation" | "booking"; label: string } | null;
 
 export interface CallActions {
   startCall: ActionState;
@@ -26,6 +28,8 @@ export function deriveCallActions(state: CallState): CallActions {
       return { startCall: disabled("Connecting…", "Connecting…"), endCall: enabled(), typeInstead: disabled(CONNECTING_REASON), statusLine: "Connecting…" };
     case "listening":
       return { startCall: HIDDEN, endCall: enabled(), typeInstead: disabled(END_TO_TYPE_REASON), statusLine: "Listening" };
+    case "agent_thinking":
+      return { startCall: HIDDEN, endCall: enabled(), typeInstead: disabled(END_TO_TYPE_REASON), statusLine: "Thinking" };
     case "agent_speaking":
       return { startCall: HIDDEN, endCall: enabled(), typeInstead: disabled(END_TO_TYPE_REASON), statusLine: "Speaking" };
     case "ending":

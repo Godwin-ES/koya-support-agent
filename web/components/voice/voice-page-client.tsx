@@ -16,9 +16,10 @@ import { CallHeadline, CallLimitMeter, CallNotice, TimerPill } from "@/component
 import { EndOfCallSummary } from "@/components/voice/end-of-call-summary";
 import { PrivacyNote } from "@/components/voice/privacy-note";
 import { TextFallback } from "@/components/voice/text-fallback";
+import { SupportActionStatus } from "@/components/voice/support-action-status";
 import type { ResumedChat } from "@/lib/use-text-chat";
 
-const IN_CALL: CallState[] = ["requesting", "connecting", "listening", "agent_speaking", "ending"];
+const IN_CALL: CallState[] = ["requesting", "connecting", "listening", "agent_thinking", "agent_speaking", "ending"];
 
 export interface VoicePageClientProps {
   accessToken: string;
@@ -34,14 +35,14 @@ export interface VoicePageClientProps {
 /** The voice page (SYSTEM-DESIGN.md §11.7) - the one screen customers see, once signed in. */
 export function VoicePageClient({ accessToken, onSignOut, userName = null, userEmail = null, greetingName = null, openChat = null }: VoicePageClientProps) {
   const voiceGreeting = greetingName ? `Hi ${greetingName}, thanks for calling RelayPay support. How can I help you today?` : undefined;
-  const { callState, fullTranscript, partial = null, endOfCallSummary, remainingSeconds, startCall, endCall, subscribeToVolume } = useVoiceCall(accessToken, { greeting: voiceGreeting });
+  const { callState, fullTranscript, partial = null, supportActivity, endOfCallSummary, remainingSeconds, startCall, endCall, subscribeToVolume } = useVoiceCall(accessToken, { greeting: voiceGreeting });
   const [textMode, setTextMode] = useState(openChat !== null);
   const [textDraft, setTextDraft] = useState<string | undefined>(undefined);
   const [hasStartedBefore, setHasStartedBefore] = useState(false);
   const callLimit = useUsageLimits(accessToken, callState)?.calls ?? null;
 
   const actions = deriveCallActions(callState);
-  const isActive = callState === "listening" || callState === "agent_speaking";
+  const isActive = callState === "listening" || callState === "agent_thinking" || callState === "agent_speaking";
   const inCall = IN_CALL.includes(callState);
   const firstName = greetingName;
   const initials = initialsFrom(userName, userEmail);
@@ -94,6 +95,7 @@ export function VoicePageClient({ accessToken, onSignOut, userName = null, userE
               </div>
 
               <CallNotice callState={callState} statusLine={actions.statusLine} />
+              {supportActivity && <SupportActionStatus activity={supportActivity} />}
               {callState === "ended" && endOfCallSummary && <EndOfCallSummary summary={endOfCallSummary} className="shadow-none" />}
 
               <div className={cn("flex gap-2 lg:w-full lg:flex-col", !inCall && "flex-col sm:flex-row")}>

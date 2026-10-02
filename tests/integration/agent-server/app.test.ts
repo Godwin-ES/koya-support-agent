@@ -288,6 +288,18 @@ describe("GET /api/conversations/:id/outcome", () => {
   });
 });
 
+describe("GET /api/conversations/:id/activity", () => {
+  it("returns ephemeral activity only with this conversation's token", async () => {
+    const a = await createConversation(await newCallerToken());
+    const b = await createConversation(await newCallerToken());
+    const url = `${baseUrl}/api/conversations/${a.body.conversation_id}/activity`;
+    const own = await fetch(url, { headers: { Authorization: `Bearer ${a.body.token}` } });
+    expect(own.status).toBe(200);
+    expect(await own.json()).toEqual({ activity: null });
+    expect((await fetch(url, { headers: { Authorization: `Bearer ${b.body.token}` } })).status).toBe(401);
+  }, 20_000);
+});
+
 describe("POST /vapi/chat/completions", () => {
   it("rejects a request with a bad X-Vapi-Server-Secret", async () => {
     const res = await fetch(`${baseUrl}/vapi/chat/completions`, {

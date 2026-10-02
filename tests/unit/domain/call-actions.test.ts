@@ -39,6 +39,13 @@ describe("deriveCallActions", () => {
     expect(a.typeInstead.kind).toBe("disabled");
   });
 
+  it("agent_thinking: shows Thinking while keeping End available", () => {
+    const a = deriveCallActions("agent_thinking");
+    expect(a.statusLine).toBe("Thinking");
+    expect(a.startCall).toEqual({ kind: "hidden" });
+    expect(a.endCall).toEqual({ kind: "enabled" });
+  });
+
   it("ending: start hidden, end disabled 'Ending…', type instead disabled", () => {
     const a = deriveCallActions("ending");
     expect(a.startCall).toEqual({ kind: "hidden" });
@@ -90,7 +97,7 @@ describe("deriveCallActions", () => {
   });
 
   it("every disabled action carries a non-empty reason", () => {
-    const states: CallState[] = ["idle", "requesting", "connecting", "listening", "agent_speaking", "ending", "ended", "mic_blocked", "limit_reached", "busy", "unavailable", "dropped"];
+    const states: CallState[] = ["idle", "requesting", "connecting", "listening", "agent_thinking", "agent_speaking", "ending", "ended", "mic_blocked", "limit_reached", "busy", "unavailable", "dropped"];
     for (const state of states) {
       const actions = deriveCallActions(state);
       for (const action of [actions.startCall, actions.endCall, actions.typeInstead]) {

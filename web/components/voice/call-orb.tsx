@@ -7,8 +7,8 @@ import type { ActionState } from "@core/domain/action-state";
 import { ActionButton } from "@/components/primitives/action-button";
 import { cn } from "@/lib/utils";
 
-const SPINNING: CallState[] = ["requesting", "connecting", "ending"];
-const IN_CALL: CallState[] = ["requesting", "connecting", "listening", "agent_speaking", "ending"];
+const SPINNING: CallState[] = ["requesting", "connecting", "agent_thinking", "ending"];
+const IN_CALL: CallState[] = ["requesting", "connecting", "listening", "agent_thinking", "agent_speaking", "ending"];
 
 export interface CallOrbProps {
   callState: CallState;

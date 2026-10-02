@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Vapi from "@vapi-ai/web";
-import type { CallState } from "@core/domain/call-actions";
+import type { CallState, SupportActivity } from "@core/domain/call-actions";
+import { CallTones } from "@/lib/call-tones";
 
 // Confirmed against docs.vapi.ai/sdk/web (Task 10): 'speech-start'/'speech-end'
 // mark the assistant speaking (not the caller), and a transcript arrives as
@@ -99,6 +100,7 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
   const [endOfCallSummary, setEndOfCallSummary] = useState<EndOfCallSummary | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [partial, setPartial] = useState<TranscriptTurn | null>(null);
+  const [supportActivity, setSupportActivity] = useState<SupportActivity>(null);
 
   const vapiRef = useRef<Vapi | null>(null);
   const conversationRef = useRef<{ id: string; token: string } | null>(null);
@@ -114,6 +116,8 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
   const attemptCounterRef = useRef(0);
   const activeAttemptRef = useRef<CallAttempt | null>(null);
   const mountedRef = useRef(true);
+  const tonesRef = useRef<CallTones | null>(null);
+  const hangupToneAttemptRef = useRef<number | null>(null);
   const greeting = options.greeting;
 
   const cancelAttempt = useCallback((attempt: CallAttempt, keepalive = false) => {
@@ -165,11 +169,13 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
           return;
         }
         attempt.connected = true;
+        tonesRef.current?.stopConnecting();
         callStartedAtRef.current = Date.now();
         lastActivityAtRef.current = Date.now();
         setCallState("listening");
       });
       vapi.on("speech-start", () => {
+        tonesRef.current?.stopConnecting();
         lastActivityAtRef.current = Date.now();
         setCallState("agent_speaking");
       });
@@ -179,6 +185,8 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
         setTimeout(() => void syncRecordedTurns(), 700);
       });
       vapi.on("call-end", () => {
+        tonesRef.current?.stopConnecting();
+        setSupportActivity(null);
         void syncRecordedTurns();
         // "What happens next" comes from the records this call created
         // (SYSTEM-DESIGN.md §11.7), fetched once it ends - not from the
@@ -200,6 +208,7 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
         for (const listener of volumeListenersRef.current) listener(volume);
       });
       vapi.on("error", (error: unknown) => {
+        tonesRef.current?.stopConnecting();
         if (activeAttemptRef.current?.cancelled) return;
         const message = error instanceof Error ? error.message : String(error);
         if (/permission|microphone|NotAllowedError/i.test(message)) {
@@ -220,6 +229,9 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
         setPartial(null);
         liveLineCountRef.current++;
         setLiveLines((prev) => [...prev, { role: message.role, text: message.transcript }]);
+        if (message.role === "user" && !activeAttemptRef.current?.cancelled) {
+          setCallState((state) => state === "agent_speaking" ? state : "agent_thinking");
+        }
       });
       vapiRef.current = vapi;
     }
@@ -240,6 +252,9 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
       conversation: null,
     };
     activeAttemptRef.current = attempt;
+    hangupToneAttemptRef.current = null;
+    tonesRef.current ??= new CallTones();
+    tonesRef.current.startConnecting();
     conversationRef.current = null;
     setCallState("requesting");
     setLiveLines([]);
@@ -261,19 +276,23 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
         body: JSON.stringify({ channel: "web_voice", access_token: accessToken }),
       });
     } catch {
+      tonesRef.current?.stopConnecting();
       if (mountedRef.current && activeAttemptRef.current === attempt && !attempt.cancelled) setCallState("unavailable");
       return;
     }
 
     if (res.status === 429) {
+      tonesRef.current?.stopConnecting();
       if (mountedRef.current && activeAttemptRef.current === attempt && !attempt.cancelled) setCallState("limit_reached");
       return;
     }
     if (res.status === 503) {
+      tonesRef.current?.stopConnecting();
       if (mountedRef.current && activeAttemptRef.current === attempt && !attempt.cancelled) setCallState("busy");
       return;
     }
     if (!res.ok) {
+      tonesRef.current?.stopConnecting();
       if (mountedRef.current && activeAttemptRef.current === attempt && !attempt.cancelled) setCallState("unavailable");
       return;
     }
@@ -295,6 +314,7 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
         cancelAttempt(attempt, !mountedRef.current);
       }
     } catch {
+      tonesRef.current?.stopConnecting();
       if (mountedRef.current && activeAttemptRef.current === attempt && !attempt.cancelled) setCallState("unavailable");
     }
   }, [getVapi, accessToken, greeting, cancelAttempt]);
@@ -304,6 +324,10 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
     if (attempt) {
       attempt.cancelled = true;
       if (!attempt.connected) cancelAttempt(attempt);
+      if (hangupToneAttemptRef.current !== attempt.id) {
+        hangupToneAttemptRef.current = attempt.id;
+        tonesRef.current?.playHangup();
+      }
     }
     setCallState(attempt?.connected ? "ending" : "ended");
     vapiRef.current?.stop();
@@ -315,7 +339,7 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
   // §9, verified against Vapi's live API in Task 13). Ticks once a second
   // only while the call is actually connected.
   useEffect(() => {
-    const active = callState === "listening" || callState === "agent_speaking";
+    const active = callState === "listening" || callState === "agent_thinking" || callState === "agent_speaking";
     if (!active) {
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = null;
@@ -342,6 +366,33 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
     };
   }, [callState]);
 
+  useEffect(() => {
+    if (callState !== "agent_thinking") {
+      setSupportActivity(null);
+      return;
+    }
+    const attempt = activeAttemptRef.current;
+    const conversation = attempt?.conversation;
+    if (!attempt || !conversation) return;
+    let disposed = false;
+    const poll = async () => {
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/conversations/${conversation.id}/activity`, { headers: { Authorization: `Bearer ${conversation.token}` } });
+        if (!res.ok) return;
+        const body = (await res.json()) as { activity?: SupportActivity };
+        if (!disposed && mountedRef.current && activeAttemptRef.current === attempt && !attempt.cancelled) setSupportActivity(body.activity ?? null);
+      } catch {
+        if (!disposed) setSupportActivity(null);
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 400);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [callState]);
+
   useEffect(
     () => {
       mountedRef.current = true;
@@ -353,6 +404,7 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
           cancelAttempt(attempt, true);
         }
         vapiRef.current?.stop();
+        tonesRef.current?.dispose();
       };
     },
     [cancelAttempt],
@@ -370,5 +422,5 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
   const opening: TranscriptTurn[] = recorded.length > 0 ? [{ role: "assistant", text: greeting ?? DEFAULT_GREETING }] : [];
   const fullTranscript = [...opening, ...recorded, ...liveLines.slice(linesSuperseded)];
 
-  return { callState, fullTranscript, partial, endOfCallSummary, remainingSeconds, startCall, endCall, subscribeToVolume };
+  return { callState, fullTranscript, partial, supportActivity, endOfCallSummary, remainingSeconds, startCall, endCall, subscribeToVolume };
 }

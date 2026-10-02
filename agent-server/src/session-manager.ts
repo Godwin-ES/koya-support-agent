@@ -7,6 +7,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildHandoverNote, callerContextNote, type BoundCustomer, type Channel, type PriorTurn } from "@core/agent";
 import { RetryBuffer } from "@core/domain/write-buffer";
+import type { SupportActivity } from "@core/domain/call-actions";
 import { supabaseDegradedMessage, sendDiscordAlert } from "@core/notify/discord";
 import { Session, type SessionOptions } from "./session";
 
@@ -109,6 +110,10 @@ export class SessionManager {
 
   has(conversationId: string): boolean {
     return this.sessions.has(conversationId) || this.preparing.has(conversationId);
+  }
+
+  activityOf(conversationId: string): SupportActivity {
+    return this.sessions.get(conversationId)?.session.supportActivity ?? null;
   }
 
   /** Starts one shared preparation. Callers arriving during it join the same promise. */

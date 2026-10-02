@@ -9,7 +9,7 @@
 // gate itself belongs in an e2e/integration test, not here.
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import type { CallState } from "@core/domain/call-actions";
+import type { CallState, SupportActivity } from "@core/domain/call-actions";
 import { deriveCallActions } from "@core/domain/call-actions";
 import type { EndOfCallSummary, TranscriptTurn } from "@/lib/use-voice-call";
 
@@ -23,6 +23,7 @@ interface HookValue {
   partial: TranscriptTurn | null;
   endOfCallSummary: EndOfCallSummary | null;
   remainingSeconds: number | null;
+  supportActivity: SupportActivity;
   startCall: () => void;
   endCall: () => void;
   subscribeToVolume: (listener: (volume: number) => void) => () => void;
@@ -41,13 +42,14 @@ function baseHookValue(callState: CallState): HookValue {
     partial: null,
     endOfCallSummary: null,
     remainingSeconds: null,
+    supportActivity: null,
     startCall: vi.fn(),
     endCall: vi.fn(),
     subscribeToVolume: () => () => {},
   };
 }
 
-const STATES: CallState[] = ["idle", "requesting", "connecting", "listening", "agent_speaking", "ending", "ended", "mic_blocked", "limit_reached", "busy", "unavailable", "dropped"];
+const STATES: CallState[] = ["idle", "requesting", "connecting", "listening", "agent_thinking", "agent_speaking", "ending", "ended", "mic_blocked", "limit_reached", "busy", "unavailable", "dropped"];
 
 // Every label deriveCallActions can produce for each slot (§11.5's table -
 // the visible label changes per state, e.g. "Start call" vs "Try again",
@@ -151,5 +153,14 @@ describe("voice page - the 5-minute countdown", () => {
     vi.resetModules();
     await renderAtState("idle", { remainingSeconds: null });
     expect(screen.queryByText(/remaining/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("voice page - live agent progress", () => {
+  it("shows Thinking separately from a meaningful booking operation", async () => {
+    vi.resetModules();
+    await renderAtState("agent_thinking", { supportActivity: { kind: "booking", label: "Setting booking for Monday, October 5 at 2:00 PM WAT" } });
+    expect(screen.getByText("Thinking")).toBeInTheDocument();
+    expect(screen.getByText("Setting booking for Monday, October 5 at 2:00 PM WAT")).toBeInTheDocument();
   });
 });

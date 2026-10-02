@@ -307,6 +307,18 @@ export function createApp(deps: AppDeps) {
     res.json({ turns: data ?? [] });
   });
 
+  // Optional, ephemeral progress for the three meaningful support writes.
+  // Private lookups and knowledge searches deliberately never appear here.
+  app.get("/api/conversations/:id/activity", (req: Request, res: Response) => {
+    const conversationId = String(req.params.id);
+    const token = req.header("authorization")?.match(/^Bearer (.+)$/i)?.[1];
+    if (!token || !verifyConversationToken(deps.conversationTokenSecret, token, conversationId)) {
+      res.status(401).json({ error: "invalid or expired token" });
+      return;
+    }
+    res.json({ activity: sessionManager.activityOf(conversationId) });
+  });
+
   // -- POST /vapi/chat/completions -------------------------------------------
   app.post("/vapi/chat/completions", async (req: Request, res: Response) => {
     if (deps.vapiServerSecret && req.header("x-vapi-server-secret") !== deps.vapiServerSecret) {
