@@ -11,6 +11,7 @@
 // network listener and no Claude calls - index.ts is the only place that
 // reads environment variables and actually calls `.listen()`.
 import express, { type Request, type Response } from "express";
+import { createHmac } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   CHAT_MESSAGE_MAX_CHARS,
@@ -72,7 +73,7 @@ export function createApp(deps: AppDeps) {
   app.use("/api", (req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Guest-Id");
     // /api/text hands back a fresh conversation token in this header; the
     // browser can only read a cross-origin response header it's told about.
     res.header("Access-Control-Expose-Headers", CONVERSATION_TOKEN_HEADER);
@@ -124,6 +125,14 @@ export function createApp(deps: AppDeps) {
     return (await verifyCallerAccount(accessToken))?.id ?? null;
   }
 
+  function guestCallerRef(browserId: unknown, request: Request): string | null {
+    if (typeof browserId !== "string" || !/^[0-9a-f-]{36}$/i.test(browserId)) return null;
+    const digest = createHmac("sha256", deps.conversationTokenSecret)
+      .update(`${request.ip ?? "unknown"}\0${browserId}`)
+      .digest("base64url");
+    return `guest:${digest}`;
+  }
+
   // -- GET /api/limits -------------------------------------------------------
   // Lets the page show what's left today before the caller ever hits a
   // limit - calls and chat messages are counted separately.
@@ -131,7 +140,8 @@ export function createApp(deps: AppDeps) {
   // URLs show up in the proxy's own logs, and Caddy redacts Authorization.
   app.get("/api/limits", async (req: Request, res: Response) => {
     const bearer = req.header("authorization")?.match(/^Bearer (.+)$/i)?.[1];
-    const callerRef = await verifyCaller(bearer);
+    const guestId = req.header("x-guest-id");
+    const callerRef = bearer ? await verifyCaller(bearer) : guestCallerRef(guestId, req);
     if (!callerRef) {
       res.status(401).json({ error: "unauthorized" });
       return;
@@ -150,15 +160,21 @@ export function createApp(deps: AppDeps) {
 
   // -- POST /api/conversations ---------------------------------------------
   app.post("/api/conversations", async (req: Request, res: Response) => {
-    const body = req.body as { channel?: "web_voice" | "web_text"; access_token?: string };
+    const body = req.body as { channel?: "web_voice" | "web_text"; access_token?: string; browser_id?: string };
     const channel: Channel = body.channel === "web_text" ? "web_text" : "web_voice";
     const pool = poolFor(channel);
-    const account = await verifyCallerAccount(body.access_token);
-    if (!account) {
+    if (body.access_token && body.browser_id) {
+      res.status(400).json({ error: "choose one identity mode" });
+      return;
+    }
+    const account = body.access_token ? await verifyCallerAccount(body.access_token) : null;
+    const guestRef = !body.access_token ? guestCallerRef(body.browser_id, req) : null;
+    if (!account && !guestRef) {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
-    const callerRef = account.id;
+    const callerRef = account?.id ?? guestRef!;
+    const accessScope = account ? (account.customerId ? "customer" : "account_without_customer") : "guest";
 
     try {
       if (channel === "web_voice") {
@@ -180,7 +196,7 @@ export function createApp(deps: AppDeps) {
         return;
       }
 
-      const { data, error } = await supabase.from("conversations").insert({ channel, caller_ref: callerRef, model: deps.model, verified_customer_id: account.customerId }).select("id").single();
+      const { data, error } = await supabase.from("conversations").insert({ channel, caller_ref: callerRef, model: deps.model, verified_customer_id: account?.customerId ?? null, access_scope: accessScope }).select("id").single();
       if (error) throw error;
       const conversationId = data.id as string;
 

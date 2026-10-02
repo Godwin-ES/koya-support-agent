@@ -63,6 +63,18 @@ async function confirmEscalation(input: Parameters<typeof createEscalation>[1]) 
 }
 
 describe("account binding - a caller only ever sees their own records", () => {
+  it("refuses every private lookup and support write in trusted guest scope", async () => {
+    const guest = { ...context, accessScope: "guest" as const };
+    const refusal = { refused: true, reason: "guest_scope" };
+    expect(await lookupCustomer(guest, {})).toEqual(refusal);
+    expect(await lookupTransaction(guest, { transaction_id: "TXN-9001" })).toEqual(refusal);
+    expect(await lookupPayout(guest, { payout_id: "PAY-7001" })).toEqual(refusal);
+    expect(await listAccountActivity(guest)).toEqual(refusal);
+    expect(await createSupportTicket(guest, { category: "other", priority: "medium", summary: "x" })).toEqual(refusal);
+    expect(await createEscalation(guest, { category: "other", reason: "x", user_name: "A", user_email: "a@example.com" })).toEqual(refusal);
+    expect((await supabase.from("support_tickets").select("id", { count: "exact", head: true }).eq("conversation_id", context.conversationId)).count).toBe(0);
+  });
+
   it("lookup_customer returns the signed-in customer, with no identifiers needed", async () => {
     await signInAs("CUS-1001");
     expect(await lookupCustomer(context, {})).toMatchObject({ found: true, customer_id: "CUS-1001", company_name: "LagosLedger", contact_name: "Amara Okafor" });

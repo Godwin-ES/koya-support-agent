@@ -12,8 +12,8 @@
 // support_notes is internal (SYSTEM-DESIGN.md §5: "never returned for
 // reading aloud") - the tool returns a fixed, category-based `guidance`
 // string derived from account/KYC status instead of the note's own text.
-import type { ToolContext } from "../context";
-import { NO_CUSTOMER_ACCOUNT, verifiedCustomerId } from "./verification";
+import { isGuestScope, type ToolContext } from "../context";
+import { GUEST_SCOPE_REFUSAL, NO_CUSTOMER_ACCOUNT, verifiedCustomerId } from "./verification";
 
 export interface LookupCustomerInput {
   customer_id?: string;
@@ -24,6 +24,7 @@ export interface LookupCustomerInput {
 
 export type LookupCustomerResult =
   | typeof NO_CUSTOMER_ACCOUNT
+  | typeof GUEST_SCOPE_REFUSAL
   | { found: false; reason: "not_this_account"; guidance: string }
   | {
       found: true;
@@ -72,6 +73,7 @@ function guidanceFor(row: CustomerRow): string {
 }
 
 export async function lookupCustomer(context: ToolContext, input: LookupCustomerInput): Promise<LookupCustomerResult> {
+  if (isGuestScope(context)) return GUEST_SCOPE_REFUSAL;
   const customerId = await verifiedCustomerId(context);
   if (!customerId) return NO_CUSTOMER_ACCOUNT;
 

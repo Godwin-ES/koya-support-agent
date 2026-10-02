@@ -60,7 +60,7 @@ export async function proxy(request: NextRequest) {
   // Invite-only: a signed-in account without access (made through
   // Supabase's public sign-up endpoint, not an invite) is treated as
   // signed out here, and refused at sign-in itself.
-  if ((pathname === "/" || pathname.startsWith("/history")) && !hasAppAccess(user)) {
+  if (pathname.startsWith("/history") && !hasAppAccess(user)) {
     const signInUrl = request.nextUrl.clone();
     signInUrl.pathname = "/sign-in";
     return NextResponse.redirect(signInUrl);

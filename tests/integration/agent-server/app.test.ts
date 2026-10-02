@@ -162,6 +162,22 @@ describe("GET /api/limits", () => {
 });
 
 describe("POST /api/conversations", () => {
+  it("creates a restricted guest conversation without persisting the raw browser id", async () => {
+    const browserId = crypto.randomUUID();
+    const res = await fetch(`${baseUrl}/api/conversations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: "web_voice", browser_id: browserId }) });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { conversation_id: string; token: string };
+    conversationIds.push(body.conversation_id);
+    const { data } = await supabase.from("conversations").select("caller_ref, access_scope, verified_customer_id").eq("id", body.conversation_id).single();
+    expect(data).toMatchObject({ access_scope: "guest", verified_customer_id: null });
+    expect(data?.caller_ref).toMatch(/^guest:/);
+    expect(data?.caller_ref).not.toContain(browserId);
+
+    const limits = await fetch(`${baseUrl}/api/limits`, { headers: { "X-Guest-Id": browserId } });
+    expect(limits.status).toBe(200);
+    expect(((await limits.json()) as { calls: { used: number } }).calls.used).toBe(1);
+  }, 20_000);
+
   it("rejects a request with no access token", async () => {
     const res = await fetch(`${baseUrl}/api/conversations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel: "web_voice" }) });
     expect(res.status).toBe(401);

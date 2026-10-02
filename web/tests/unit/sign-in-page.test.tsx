@@ -41,4 +41,10 @@ describe("sign-in page", () => {
     expect(screen.queryByRole("link", { name: /sign up/i })).not.toBeInTheDocument();
     expect(screen.getByText(/access is by invitation/i)).toBeInTheDocument();
   });
+
+  it("offers general support without signing in", async () => {
+    const { default: SignInPage } = await import("@/app/sign-in/page");
+    render(<SignInPage />);
+    expect(screen.getByRole("link", { name: "Continue as guest" })).toHaveAttribute("href", "/");
+  });
 });

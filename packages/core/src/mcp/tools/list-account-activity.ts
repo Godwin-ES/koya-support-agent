@@ -6,8 +6,8 @@
 // never from the input, so it only ever lists that customer's records, with
 // the same customer-safe fields (no recipient names). Anything needing
 // review carries the same "escalate" guidance.
-import type { ToolContext } from "../context";
-import { NO_CUSTOMER_ACCOUNT, verifiedCustomerId } from "./verification";
+import { isGuestScope, type ToolContext } from "../context";
+import { GUEST_SCOPE_REFUSAL, NO_CUSTOMER_ACCOUNT, verifiedCustomerId } from "./verification";
 
 const MAX_ITEMS = 10;
 
@@ -37,9 +37,11 @@ export interface AccountActivityPayout {
 
 export type ListAccountActivityResult =
   | typeof NO_CUSTOMER_ACCOUNT
+  | typeof GUEST_SCOPE_REFUSAL
   | { found: true; transactions: AccountActivityTransaction[]; payouts: AccountActivityPayout[]; needs_attention: number };
 
 export async function listAccountActivity(context: ToolContext): Promise<ListAccountActivityResult> {
+  if (isGuestScope(context)) return GUEST_SCOPE_REFUSAL;
   const customerId = await verifiedCustomerId(context);
   if (!customerId) return NO_CUSTOMER_ACCOUNT;
 

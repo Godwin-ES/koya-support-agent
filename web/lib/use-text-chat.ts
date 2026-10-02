@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { conversationIdentity } from "@/lib/support-identity";
 
 export interface TextTurn {
   role: "user" | "assistant";
@@ -35,7 +36,7 @@ async function errorCodeFrom(res: Response): Promise<ChatErrorCode> {
 }
 
 /** The text fallback (SYSTEM-DESIGN.md §11.7, §3: "the same session code, streaming to the browser instead of Vapi, channel = web_text"). `accessToken` is the signed-in caller's Supabase session token. */
-export function useTextChat(accessToken: string, resume?: ResumedChat | null) {
+export function useTextChat(accessToken: string | null, resume?: ResumedChat | null) {
   const [turns, setTurns] = useState<TextTurn[]>(resume?.messages ?? []);
   const resumeIdRef = useRef<string | null>(resume?.id ?? null);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -66,7 +67,7 @@ export function useTextChat(accessToken: string, resume?: ResumedChat | null) {
       res = await fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/conversations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: "web_text", access_token: accessToken }),
+        body: JSON.stringify({ channel: "web_text", ...conversationIdentity(accessToken) }),
       });
     } catch {
       throw new ChatSendError("unavailable");

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Vapi from "@vapi-ai/web";
 import type { CallState, SupportActivity } from "@core/domain/call-actions";
 import { CallTones } from "@/lib/call-tones";
+import { conversationIdentity } from "@/lib/support-identity";
 
 // Confirmed against docs.vapi.ai/sdk/web (Task 10): 'speech-start'/'speech-end'
 // mark the assistant speaking (not the caller), and a transcript arrives as
@@ -88,7 +89,7 @@ interface CallAttempt {
  * ("Hi Amara, thanks for calling...") via Vapi's per-call firstMessage
  * override.
  */
-export function useVoiceCall(accessToken: string, options: { greeting?: string } = {}) {
+export function useVoiceCall(accessToken: string | null, options: { greeting?: string } = {}) {
   const [callState, setCallState] = useState<CallState>("idle");
   // Vapi's own transcript lines, as they arrive - live, but split wherever
   // the speech paused. Once a turn is recorded on the server, the recorded
@@ -273,7 +274,7 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
       res = await fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/conversations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel: "web_voice", access_token: accessToken }),
+        body: JSON.stringify({ channel: "web_voice", ...conversationIdentity(accessToken) }),
       });
     } catch {
       tonesRef.current?.stopConnecting();

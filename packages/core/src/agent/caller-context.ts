@@ -1,3 +1,5 @@
+import type { AccessScope } from "./access-scope";
+
 // Who the agent is talking to, appended to the system prompt when a session
 // starts (SYSTEM-DESIGN.md §4). Built from the conversation's bound customer
 // (set by agent-server from the signed-in account), so it's a fact about the
@@ -9,7 +11,10 @@ export interface BoundCustomer {
   contact_email: string;
 }
 
-export function callerContextNote(customer: BoundCustomer | null): string {
+export function callerContextNote(customer: BoundCustomer | null, accessScope: AccessScope = "evaluation"): string {
+  if (accessScope === "guest") {
+    return `\n\n## Who you're talking to\n\nThis is a guest session for general RelayPay questions only. Use approved knowledge. Do not look up or discuss any account, transaction, payout, customer, ticket, escalation, or booking details. If they ask for private or account-specific help, explain that they need to sign in and do not collect their details.`;
+  }
   if (!customer) {
     return `\n\n## Who you're talking to\n\nThis caller's login isn't linked to a customer account. Answer general questions from approved knowledge. For anything about a specific account, transaction or payout, explain that account help needs signing in with their own customer account, and don't try to look anything up. If they need a human, escalate as usual, collecting their name and email.`;
   }

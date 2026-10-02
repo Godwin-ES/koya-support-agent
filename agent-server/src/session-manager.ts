@@ -5,7 +5,7 @@
 // handover note if a conversation already has turns recorded but no live
 // session (a lost worker).
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildHandoverNote, callerContextNote, type BoundCustomer, type Channel, type PriorTurn } from "@core/agent";
+import { buildHandoverNote, callerContextNote, type AccessScope, type BoundCustomer, type Channel, type PriorTurn } from "@core/agent";
 import { RetryBuffer } from "@core/domain/write-buffer";
 import type { SupportActivity } from "@core/domain/call-actions";
 import { supabaseDegradedMessage, sendDiscordAlert } from "@core/notify/discord";
@@ -140,11 +140,11 @@ export class SessionManager {
     const reservation = { promise: null as unknown as Promise<Session>, pool, cancelled: false };
     reservation.promise = (async () => {
       try {
-        const [priorTurns, customer] = await Promise.all([
+        const [priorTurns, caller] = await Promise.all([
           seed.priorTurns !== undefined ? Promise.resolve(seed.priorTurns) : this.fetchPriorTurns(conversationId),
-          this.fetchBoundCustomer(conversationId),
+          this.fetchCallerContext(conversationId),
         ]);
-        const handoverNote = callerContextNote(customer) + (priorTurns.length > 0 ? buildHandoverNote(priorTurns) : "");
+        const handoverNote = callerContextNote(caller.customer, caller.accessScope) + (priorTurns.length > 0 ? buildHandoverNote(priorTurns) : "");
         const sessionOptions: SessionOptions = {
           conversationId,
           model: this.options.model,
@@ -153,6 +153,7 @@ export class SessionManager {
           mcpServerToken: this.options.mcpServerToken,
           supabase: this.options.supabase,
           channel,
+          accessScope: caller.accessScope,
           handoverNote,
           queryFactory: this.options.queryFactory,
           writeBuffer: this.writeBuffer,
@@ -218,14 +219,16 @@ export class SessionManager {
     this.sweepHandle = null;
   }
 
-  private async fetchBoundCustomer(conversationId: string): Promise<BoundCustomer | null> {
-    const { data, error } = await this.options.supabase.from("conversations").select("verified_customer_id").eq("id", conversationId).maybeSingle();
+  private async fetchCallerContext(conversationId: string): Promise<{ customer: BoundCustomer | null; accessScope: AccessScope }> {
+    const { data, error } = await this.options.supabase.from("conversations").select("verified_customer_id, access_scope").eq("id", conversationId).maybeSingle();
     if (error) throw error;
-    const customerId = (data as { verified_customer_id: string | null } | null)?.verified_customer_id;
-    if (!customerId) return null;
+    const row = data as { verified_customer_id: string | null; access_scope: AccessScope } | null;
+    const accessScope = row?.access_scope ?? "evaluation";
+    const customerId = row?.verified_customer_id;
+    if (!customerId) return { customer: null, accessScope };
     const { data: customer, error: customerError } = await this.options.supabase.from("customers").select("customer_id, company_name, contact_name, contact_email").eq("customer_id", customerId).maybeSingle();
     if (customerError) throw customerError;
-    return (customer as BoundCustomer | null) ?? null;
+    return { customer: (customer as BoundCustomer | null) ?? null, accessScope };
   }
 
   private async fetchPriorTurns(conversationId: string): Promise<PriorTurn[]> {

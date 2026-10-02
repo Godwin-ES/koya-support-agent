@@ -12,7 +12,7 @@ import { MessageThread } from "@/components/conversation/message-thread";
 import { TopicChips } from "@/components/conversation/topics";
 
 export interface TextFallbackProps {
-  accessToken: string;
+  accessToken: string | null;
   onSwitchToVoice: () => void;
   initialDraft?: string;
   userInitials?: string;

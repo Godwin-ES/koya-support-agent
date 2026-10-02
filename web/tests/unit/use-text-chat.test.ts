@@ -9,6 +9,18 @@ function reply(token: string): Response {
 }
 
 describe("useTextChat", () => {
+  it("starts guest chat with a browser id and no access token", async () => {
+    localStorage.clear();
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ conversation_id: "g1", token: "gt1" }), { status: 200 }))
+      .mockResolvedValueOnce(reply("gt2"));
+    const { result } = renderHook(() => useTextChat(null));
+    await act(async () => { await result.current.sendMessage("What is RelayPay?"); });
+    const body = JSON.parse(String((fetchSpy.mock.calls[0]![1] as RequestInit).body));
+    expect(body).toMatchObject({ channel: "web_text", browser_id: expect.any(String) });
+    expect(body).not.toHaveProperty("access_token");
+  });
+
   it("sends each message with the freshest token the server handed back", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")

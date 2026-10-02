@@ -4,10 +4,18 @@
 // HTTP mode, once per request) from the X-Conversation-Id header, never
 // from a model-supplied conversation_id.
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { AccessScope } from "../agent/access-scope";
 
 export interface ToolContext {
   supabase: SupabaseClient;
   conversationId: string;
+  /** Trusted scope hydrated from the conversation row, never model input. */
+  accessScope?: AccessScope;
+}
+
+export const GUEST_SCOPE_REFUSAL = { refused: true as const, reason: "guest_scope" as const };
+export function isGuestScope(context: ToolContext): boolean {
+  return context.accessScope === "guest";
 }
 
 /**

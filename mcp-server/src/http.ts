@@ -25,6 +25,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { serviceRoleClient } from "./db";
 import { createServer } from "./server";
 import { warmEmbeddings } from "@core/knowledge/embeddings";
+import type { AccessScope } from "@core/agent";
 
 const PORT = Number(process.env.MCP_PORT ?? 8090);
 const TOKEN = process.env.MCP_SERVER_TOKEN;
@@ -49,7 +50,10 @@ async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<voi
     return sendJsonRpcError(res, 400, "Missing X-Conversation-Id header.");
   }
 
-  const server = createServer({ supabase: serviceRoleClient(), conversationId });
+  const supabase = serviceRoleClient();
+  const { data: conversation, error } = await supabase.from("conversations").select("access_scope").eq("id", conversationId).maybeSingle();
+  if (error || !conversation) return sendJsonRpcError(res, 404, "Conversation not found.");
+  const server = createServer({ supabase, conversationId, accessScope: conversation.access_scope as AccessScope });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   try {
     await server.connect(transport);

@@ -22,7 +22,7 @@ import type { ResumedChat } from "@/lib/use-text-chat";
 const IN_CALL: CallState[] = ["requesting", "connecting", "listening", "agent_thinking", "agent_speaking", "ending"];
 
 export interface VoicePageClientProps {
-  accessToken: string;
+  accessToken: string | null;
   onSignOut: () => Promise<void>;
   userName?: string | null;
   userEmail?: string | null;
@@ -35,6 +35,7 @@ export interface VoicePageClientProps {
 /** The voice page (SYSTEM-DESIGN.md §11.7) - the one screen customers see, once signed in. */
 export function VoicePageClient({ accessToken, onSignOut, userName = null, userEmail = null, greetingName = null, openChat = null }: VoicePageClientProps) {
   const voiceGreeting = greetingName ? `Hi ${greetingName}, thanks for calling RelayPay support. How can I help you today?` : undefined;
+  const isGuest = accessToken === null;
   const { callState, fullTranscript, partial = null, supportActivity, endOfCallSummary, remainingSeconds, startCall, endCall, subscribeToVolume } = useVoiceCall(accessToken, { greeting: voiceGreeting });
   const [textMode, setTextMode] = useState(openChat !== null);
   const [textDraft, setTextDraft] = useState<string | undefined>(undefined);
@@ -76,7 +77,7 @@ export function VoicePageClient({ accessToken, onSignOut, userName = null, userE
 
   return (
     <div className="bg-dot-grid flex min-h-dvh flex-col">
-      <AppHeader displayName={userName} email={userEmail} initials={initials} onSignOut={onSignOut} showSignOut={!inCall} />
+      <AppHeader displayName={userName} email={userEmail} initials={initials} onSignOut={onSignOut} showSignOut={!inCall} guest={isGuest} />
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-10">
         <h1 className="sr-only">RelayPay Support</h1>
@@ -146,10 +147,10 @@ export function VoicePageClient({ accessToken, onSignOut, userName = null, userE
           <section className="mx-auto flex w-full max-w-2xl animate-fade-in flex-col items-center text-center">
             <span className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-xs font-medium text-[var(--color-text-muted)] shadow-[var(--shadow-sm)]">
               <Headset className="size-3.5 text-[var(--color-accent)]" aria-hidden="true" />
-              Voice and chat support
+              {isGuest ? "General support" : "Voice and chat support"}
             </span>
             <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight text-[var(--color-primary)] sm:text-4xl">{firstName ? `Hi ${firstName}, how can we help?` : "How can we help today?"}</h2>
-            <p className="mt-3 max-w-md text-balance text-base text-[var(--color-text-muted)]">Ask about payments, payouts, invoices or your account. Talk to us, or type if you prefer.</p>
+            <p className="mt-3 max-w-md text-balance text-base text-[var(--color-text-muted)]">{isGuest ? "Ask general questions about RelayPay. Sign in for account, transaction or payout help." : "Ask about payments, payouts, invoices or your account. Talk to us, or type if you prefer."}</p>
 
             <div className="mt-8">
               <CallOrb callState={callState} variant="hero" startCall={actions.startCall} onStart={handleStart} subscribeToVolume={subscribeToVolume} />
@@ -171,7 +172,7 @@ export function VoicePageClient({ accessToken, onSignOut, userName = null, userE
             </div>
             <div className="mt-4">{typeInsteadButton()}</div>
 
-            {!inCall && (
+            {!inCall && !isGuest && (
               <div className="mt-14 w-full text-left">
                 <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Popular topics</h3>
                 <TopicGrid onPick={openText} disabled={actions.typeInstead.kind !== "enabled"} />

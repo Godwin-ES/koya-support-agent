@@ -4,9 +4,9 @@
 // else's - or one that doesn't exist - gets the same "not on this account",
 // so not even a status leaks. A "review required" status adds an escalate
 // guidance, since that's a human decision.
-import type { ToolContext } from "../context";
+import { isGuestScope, type ToolContext } from "../context";
 import { normalizeReference } from "../reference";
-import { NO_CUSTOMER_ACCOUNT, NOT_ON_THIS_ACCOUNT, verifiedCustomerId } from "./verification";
+import { GUEST_SCOPE_REFUSAL, NO_CUSTOMER_ACCOUNT, NOT_ON_THIS_ACCOUNT, verifiedCustomerId } from "./verification";
 
 export interface LookupTransactionInput {
   transaction_id: string;
@@ -14,6 +14,7 @@ export interface LookupTransactionInput {
 
 export type LookupTransactionResult =
   | typeof NO_CUSTOMER_ACCOUNT
+  | typeof GUEST_SCOPE_REFUSAL
   | typeof NOT_ON_THIS_ACCOUNT
   | {
       found: true;
@@ -29,6 +30,7 @@ export type LookupTransactionResult =
     };
 
 export async function lookupTransaction(context: ToolContext, input: LookupTransactionInput): Promise<LookupTransactionResult> {
+  if (isGuestScope(context)) return GUEST_SCOPE_REFUSAL;
   const customerId = await verifiedCustomerId(context);
   if (!customerId) return NO_CUSTOMER_ACCOUNT;
   const normalized = normalizeReference("TXN", input.transaction_id);

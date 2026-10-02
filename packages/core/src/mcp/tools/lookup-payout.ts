@@ -5,9 +5,9 @@
 // payouts table has no stored support_summary (unlike transactions) - one
 // is composed here from status and failure_reason, the same customer-safe
 // information a human agent would read off the record.
-import type { ToolContext } from "../context";
+import { isGuestScope, type ToolContext } from "../context";
 import { normalizeReference } from "../reference";
-import { NO_CUSTOMER_ACCOUNT, NOT_ON_THIS_ACCOUNT, verifiedCustomerId } from "./verification";
+import { GUEST_SCOPE_REFUSAL, NO_CUSTOMER_ACCOUNT, NOT_ON_THIS_ACCOUNT, verifiedCustomerId } from "./verification";
 
 export interface LookupPayoutInput {
   payout_id?: string;
@@ -17,6 +17,7 @@ export interface LookupPayoutInput {
 export type LookupPayoutResult =
   | { found: false; reason: "not_enough_to_search" }
   | typeof NO_CUSTOMER_ACCOUNT
+  | typeof GUEST_SCOPE_REFUSAL
   | typeof NOT_ON_THIS_ACCOUNT
   | {
       found: true;
@@ -35,6 +36,7 @@ function composeSupportSummary(status: string, failureReason: string | null): st
 }
 
 export async function lookupPayout(context: ToolContext, input: LookupPayoutInput): Promise<LookupPayoutResult> {
+  if (isGuestScope(context)) return GUEST_SCOPE_REFUSAL;
   if (!input.payout_id && !input.transaction_id) return { found: false, reason: "not_enough_to_search" };
   const customerId = await verifiedCustomerId(context);
   if (!customerId) return NO_CUSTOMER_ACCOUNT;

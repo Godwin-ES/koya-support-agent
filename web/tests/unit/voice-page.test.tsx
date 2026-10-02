@@ -164,3 +164,17 @@ describe("voice page - live agent progress", () => {
     expect(screen.getByText("Setting booking for Monday, October 5 at 2:00 PM WAT")).toBeInTheDocument();
   });
 });
+
+describe("voice page - guest mode", () => {
+  it("is neutral, links to sign in, and hides account/history affordances", async () => {
+    vi.resetModules();
+    mockUseVoiceCall.mockReturnValue(baseHookValue("idle"));
+    const { VoicePageClient } = await import("@/components/voice/voice-page-client");
+    render(<VoicePageClient accessToken={null} onSignOut={async () => {}} />);
+    expect(screen.getByText("General support")).toBeInTheDocument();
+    expect(screen.getByText(/sign in for account, transaction or payout help/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/sign-in");
+    expect(screen.queryByRole("link", { name: "History" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Popular topics")).not.toBeInTheDocument();
+  });
+});

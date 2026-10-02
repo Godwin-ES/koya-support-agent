@@ -26,6 +26,14 @@ describe("useUsageLimits", () => {
     expect((init as RequestInit).headers).toEqual({ Authorization: "Bearer tok-1" });
   });
 
+  it("uses an opaque browser id for guest limits", async () => {
+    localStorage.clear();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(LIMITS), { status: 200 }));
+    renderHook(() => useUsageLimits(null, "idle"));
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).headers).toMatchObject({ "X-Guest-Id": expect.any(String) });
+  });
+
   it("stays null (not throw) when the fetch fails - a nice-to-have display, never load-bearing", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
     const { result } = renderHook(() => useUsageLimits("tok-1", "idle"));

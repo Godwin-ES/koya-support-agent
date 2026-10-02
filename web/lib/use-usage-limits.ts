@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { limitsIdentityHeaders } from "@/lib/support-identity";
 
 export interface CallLimitStatus {
   used: number;
@@ -20,7 +21,7 @@ export interface UsageLimits {
 }
 
 /** Today's calls and chat messages, counted separately (SYSTEM-DESIGN.md §9). The request carries the caller's session token, which agent-server verifies. Refetches whenever `refreshKey` changes (a call ending, a reply arriving). */
-export function useUsageLimits(accessToken: string, refreshKey: unknown): UsageLimits | null {
+export function useUsageLimits(accessToken: string | null, refreshKey: unknown): UsageLimits | null {
   const [status, setStatus] = useState<UsageLimits | null>(null);
 
   useEffect(() => {
@@ -28,7 +29,7 @@ export function useUsageLimits(accessToken: string, refreshKey: unknown): UsageL
 
     let cancelled = false;
     // In a header, not the URL - URLs end up in proxy logs.
-    fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+    fetch(url, { headers: limitsIdentityHeaders(accessToken) })
       .then((res) => (res.ok ? (res.json() as Promise<UsageLimits>) : null))
       .then((data) => {
         if (!cancelled && data?.calls && data.chat) setStatus(data);

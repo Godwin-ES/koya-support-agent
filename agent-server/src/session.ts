@@ -9,7 +9,7 @@
 // `query()` from `@anthropic-ai/claude-agent-sdk`.
 import { query, type Query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildSystemPrompt, decideTurn, DecisionTagExtractor, extractEmails, stripDecisionTags, VoiceStreamFilter, type AnswerType, type Channel, type DeclaredDecision } from "@core/agent";
+import { allowedToolsForScope, buildSystemPrompt, decideTurn, DecisionTagExtractor, extractEmails, stripDecisionTags, VoiceStreamFilter, type AccessScope, type AnswerType, type Channel, type DeclaredDecision } from "@core/agent";
 import { currentTurnSeq, readTurnToolCalls, type ToolContext, createSupportTicket, formatCallbackSlot } from "@core/mcp";
 import { AgentFailure, classifyMcpFailure, classifySdkError, CLAUDE_DOWN_FALLBACK, MCP_DOWN_FALLBACK } from "@core/domain/failure";
 import type { SupportActivity } from "@core/domain/call-actions";
@@ -41,6 +41,7 @@ export interface SessionOptions {
   mcpServerToken: string;
   supabase: SupabaseClient;
   channel?: Channel;
+  accessScope?: AccessScope;
   /** SYSTEM-DESIGN.md §10: a fresh session for a conversation whose previous one was lost, briefed on what already happened. */
   handoverNote?: string;
   /** Overrides the real Agent SDK query() - session-manager tests supply a stub here. */
@@ -101,7 +102,7 @@ export class Session {
 
   constructor(options: SessionOptions) {
     this.conversationId = options.conversationId;
-    this.toolContext = { supabase: options.supabase, conversationId: options.conversationId };
+    this.toolContext = { supabase: options.supabase, conversationId: options.conversationId, accessScope: options.accessScope };
     this.writeBuffer = options.writeBuffer ?? new RetryBuffer(options.supabase);
 
     const systemPrompt = buildSystemPrompt(new Date()) + (options.handoverNote ?? "");
@@ -122,7 +123,7 @@ export class Session {
                 alwaysLoad: true,
               },
             },
-            allowedTools: TOOL_NAMES.map((name) => `mcp__${MCP_SERVER_NAME}__${name}`),
+            allowedTools: allowedToolsForScope(options.accessScope ?? "evaluation").map((name) => `mcp__${MCP_SERVER_NAME}__${name}`),
             disallowedTools: [...DISALLOWED_BUILTIN_TOOLS],
             includePartialMessages: true,
             settingSources: [],

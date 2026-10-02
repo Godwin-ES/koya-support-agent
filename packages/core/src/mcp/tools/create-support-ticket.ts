@@ -6,7 +6,7 @@
 // unique index doesn't. A conflict just means "the caller already has an
 // open ticket for this" - the existing one is returned rather than treated
 // as a failure.
-import type { ToolContext } from "../context";
+import { GUEST_SCOPE_REFUSAL, isGuestScope, type ToolContext } from "../context";
 import { isCategory, isPriority } from "./categories";
 import { verifiedCustomerId } from "./verification";
 import { newTicketMessage, sendDiscordAlert } from "../../notify/discord";
@@ -23,6 +23,7 @@ export interface CreateSupportTicketInput {
 
 export type CreateSupportTicketResult =
   | { refused: true; reason: "invalid_category" | "invalid_priority" }
+  | typeof GUEST_SCOPE_REFUSAL
   | ConfirmationRefusal
   | { confirmation_required: true; confirmation_key: string; confirmation_summary: string }
   | { ticket_id: string; status: "open" };
@@ -37,6 +38,7 @@ export async function createSupportTicket(
   rawInput: CreateSupportTicketInput,
   options: { notify?: boolean; systemFailure?: boolean } = {},
 ): Promise<CreateSupportTicketResult> {
+  if (isGuestScope(context) && !options.systemFailure) return GUEST_SCOPE_REFUSAL;
   const input = { ...rawInput, summary: rawInput.summary.trim() };
   if (!isCategory(input.category)) return { refused: true, reason: "invalid_category" };
   if (!isPriority(input.priority)) return { refused: true, reason: "invalid_priority" };

@@ -9,3 +9,4 @@ export * from "./conversation-summary";
 export * from "./caller-context";
 export * from "./summarize-conversation";
 export * from "./decision-tag";
+export * from "./access-scope";

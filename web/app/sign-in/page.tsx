@@ -9,6 +9,7 @@ import { AuthShell } from "@/components/auth/auth-shell";
 import { AuthField } from "@/components/auth/auth-field";
 import { FormError, SubmitButton } from "@/components/auth/submit-button";
 import { signIn, sampleCustomerSignIn, type SignInResult } from "./actions";
+import Link from "next/link";
 
 const TONE: Record<(typeof SAMPLE_CUSTOMERS)[number]["tone"], string> = {
   success: "bg-[var(--color-success-bg)] text-[var(--color-success-text)]",
@@ -72,6 +73,7 @@ export default function SignInPage() {
       </section>
 
       <p className="mt-6 text-center text-sm text-[var(--color-text-muted)]">Access is by invitation. Check your email for an invite link.</p>
+      <Link href="/" className="mt-3 block text-center text-sm font-semibold text-[var(--color-accent)] hover:underline">Continue as guest</Link>
     </AuthShell>
   );
 }

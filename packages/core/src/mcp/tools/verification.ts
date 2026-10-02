@@ -3,9 +3,12 @@
 // account's own server-only link (app_metadata.customer_id) - and never by
 // a tool or anything the caller says. Every account tool reads it: a caller
 // can only ever see their own records.
-import type { ToolContext } from "../context";
+import { GUEST_SCOPE_REFUSAL, isGuestScope, type ToolContext } from "../context";
+
+export { GUEST_SCOPE_REFUSAL };
 
 export async function verifiedCustomerId(context: ToolContext): Promise<string | null> {
+  if (isGuestScope(context)) return null;
   const { data, error } = await context.supabase.from("conversations").select("verified_customer_id").eq("id", context.conversationId).maybeSingle();
   if (error) throw error;
   return (data?.verified_customer_id as string | null) ?? null;

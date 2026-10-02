@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { History, Headset, LogOut } from "lucide-react";
+import { History, Headset, LogIn, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Wordmark } from "@/components/brand/wordmark";
 import { UserAvatar } from "@/components/conversation/avatars";
@@ -16,6 +16,7 @@ export function AppHeader({
   onSignOut,
   showSignOut,
   current = "support",
+  guest = false,
 }: {
   displayName: string | null;
   /** Shown under the name. */
@@ -24,6 +25,7 @@ export function AppHeader({
   onSignOut: () => Promise<void>;
   showSignOut: boolean;
   current?: "support" | "history";
+  guest?: boolean;
 }) {
   return (
     <header className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-surface)]/90 backdrop-blur-md">
@@ -33,7 +35,7 @@ export function AppHeader({
           <span className="hidden h-5 w-px bg-[var(--color-border)] sm:block" aria-hidden="true" />
           {/* Hidden mid-call, like Sign out: leaving the page would drop the call. */}
           <nav aria-label="App" className={cn("flex items-center gap-1", !showSignOut && "invisible")}>
-            {NAV.map(({ href, label, icon: Icon, key }) => (
+            {NAV.filter(({ key }) => !guest || key !== "history").map(({ href, label, icon: Icon, key }) => (
               <Link
                 key={key}
                 href={href}
@@ -60,7 +62,12 @@ export function AppHeader({
               </span>
             </div>
           )}
-          {showSignOut && (
+          {guest && showSignOut && (
+            <Link href="/sign-in" className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 py-1.5 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]">
+              <LogIn className="size-4" aria-hidden="true" /> Sign in
+            </Link>
+          )}
+          {!guest && showSignOut && (
             <form action={onSignOut}>
               <button
                 type="submit"

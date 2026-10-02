@@ -17,7 +17,7 @@
 // When no `ticket_id` is supplied, one is created and linked ("creates or
 // links a ticket", SYSTEM-DESIGN.md §5) at `high` priority - an escalation
 // is by definition something a human needs to act on soon.
-import type { ToolContext } from "../context";
+import { GUEST_SCOPE_REFUSAL, isGuestScope, type ToolContext } from "../context";
 import { isCategory } from "./categories";
 import { verifiedCustomerId } from "./verification";
 import { newEscalationMessage, sendDiscordAlert } from "../../notify/discord";
@@ -39,6 +39,7 @@ export interface CreateEscalationInput {
 
 export type CreateEscalationResult =
   | { refused: true; reason: "missing_name" | "invalid_email" | "invalid_category" | "invalid_time" | "past_time" | "weekend" | "outside_business_hours"; hint?: string }
+  | typeof GUEST_SCOPE_REFUSAL
   | ConfirmationRefusal
   | { refused: true; reason: "slot_unavailable"; suggested_times: Array<{ iso: string; label: string }> }
   | { confirmation_required: true; confirmation_key: string; confirmation_summary: string }
@@ -74,6 +75,7 @@ async function nearbyAvailableSlots(context: ToolContext, preferredTime: string)
 }
 
 export async function createEscalation(context: ToolContext, rawInput: CreateEscalationInput): Promise<CreateEscalationResult> {
+  if (isGuestScope(context)) return GUEST_SCOPE_REFUSAL;
   // The customer is always the conversation's own (verification.ts), never
   // one the model names; a signed-in customer's name and email come from
   // their account when the model leaves them out.
