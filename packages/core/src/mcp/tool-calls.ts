@@ -29,6 +29,10 @@ export async function callWithLogging<T>(
 ): Promise<T> {
   const startedAt = Date.now();
   const turnSeqPromise = currentTurnSeq(context);
+  // The handler may do other async work before it needs the turn sequence.
+  // Observe an early lookup failure immediately so Node does not report an
+  // unhandled rejection while the call itself is still in progress.
+  void turnSeqPromise.catch(() => undefined);
   const callContext: ToolContext = { ...context, turnSeqPromise };
   let outcome: ToolOutcome<T>;
   let errorMessage: string | null = null;
