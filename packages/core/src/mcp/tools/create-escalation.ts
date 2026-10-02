@@ -14,18 +14,16 @@
 // this boundary still rejects malformed, past, weekend and out-of-hours
 // slots deterministically before asking the caller to confirm.
 //
-// When no `ticket_id` is supplied, one is created and linked ("creates or
-// links a ticket", SYSTEM-DESIGN.md §5) at `high` priority - an escalation
-// is by definition something a human needs to act on soon.
+// The model never supplies a ticket ID. The atomic database operation
+// creates and links one at high priority as part of the escalation.
 import { GUEST_SCOPE_REFUSAL, isGuestScope, type ToolContext } from "../context";
 import { isCategory } from "./categories";
 import { verifiedCustomerId } from "./verification";
 import { newEscalationMessage, sendDiscordAlert } from "../../notify/discord";
-import { formatCallbackSlot, validateCallbackSlot } from "../callback-policy";
+import { formatCallbackSlot, hasExplicitTimePeriod, validateCallbackSlot } from "../callback-policy";
 import { confirmSupportAction, proposeSupportAction, type ConfirmationRefusal } from "./support-action-confirmation";
 
 export interface CreateEscalationInput {
-  ticket_id?: string;
   customer_id?: string;
   /** Optional for a signed-in customer - their account's own name and email are used. */
   user_name?: string;
@@ -33,12 +31,14 @@ export interface CreateEscalationInput {
   category: string;
   reason: string;
   preferred_time?: string;
+  /** The caller's exact time phrase, used to reject missing AM/PM deterministically. */
+  preferred_time_source?: string;
   confirmed?: boolean;
   confirmation_key?: string;
 }
 
 export type CreateEscalationResult =
-  | { refused: true; reason: "missing_name" | "invalid_email" | "invalid_category" | "invalid_time" | "past_time" | "weekend" | "outside_business_hours"; hint?: string }
+  | { refused: true; reason: "missing_name" | "invalid_email" | "invalid_category" | "missing_time_period" | "invalid_time" | "past_time" | "weekend" | "outside_business_hours"; hint?: string }
   | typeof GUEST_SCOPE_REFUSAL
   | ConfirmationRefusal
   | { refused: true; reason: "slot_unavailable"; suggested_times: Array<{ iso: string; label: string }> }
@@ -93,6 +93,9 @@ export async function createEscalation(context: ToolContext, rawInput: CreateEsc
   if (!EMAIL_RE.test(input.user_email)) return { refused: true, reason: "invalid_email" };
   if (!isCategory(input.category)) return { refused: true, reason: "invalid_category" };
   if (input.preferred_time !== undefined) {
+    if (!input.preferred_time_source || !hasExplicitTimePeriod(input.preferred_time_source)) {
+      return { refused: true, reason: "missing_time_period", hint: "Ask whether the caller means AM or PM. Do not infer it from business hours." };
+    }
     const validation = validateCallbackSlot(input.preferred_time);
     if (!validation.ok) {
       return { refused: true, reason: validation.reason, hint: "Callbacks are available Monday to Friday, 9:00 AM to 3:00 PM WAT, in 30-minute slots. Supply an ISO-8601 timestamp with an explicit offset." };
@@ -100,13 +103,13 @@ export async function createEscalation(context: ToolContext, rawInput: CreateEsc
   }
 
   const payload = {
-    ticket_id: input.ticket_id ?? null,
     customer_id: input.customer_id ?? null,
     user_name: input.user_name,
     user_email: input.user_email,
     category: input.category,
     reason: input.reason,
     preferred_time: input.preferred_time ?? null,
+    preferred_time_source: input.preferred_time_source ?? null,
   };
   const kind = input.preferred_time ? "booking" as const : "escalation" as const;
   if (!input.confirmed) {
@@ -128,7 +131,7 @@ export async function createEscalation(context: ToolContext, rawInput: CreateEsc
     p_category: input.category,
     p_reason: input.reason,
     p_callback_time: input.preferred_time ?? null,
-    p_ticket_id: input.ticket_id ?? null,
+    p_ticket_id: null,
   });
   if (error) throw error;
   const result = (data as Array<{ outcome: "created" | "existing" | "slot_unavailable"; escalation_id: string | null }>)[0];

@@ -1,9 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { CALLBACK_SLOT_MINUTES, CALLBACK_TIME_ZONE, formatCallbackSlot, validateCallbackSlot } from "@core/mcp";
+import { CALLBACK_SLOT_MINUTES, CALLBACK_TIME_ZONE, formatCallbackSlot, hasExplicitTimePeriod, validateCallbackSlot } from "@core/mcp";
 
 const NOW = new Date("2026-10-02T12:00:00+01:00");
 
 describe("callback policy", () => {
+  it.each([
+    ["tomorrow by 2", false],
+    ["Monday at 2 PM", true],
+    ["Monday at 2pm", true],
+    ["Monday at 2 p.m.", true],
+    ["Monday at 14:00", true],
+    ["Monday at noon", true],
+  ])("detects whether the caller made the time period explicit in %j", (source, expected) => {
+    expect(hasExplicitTimePeriod(source)).toBe(expected);
+  });
+
   it("accepts a 30-minute weekday slot ending at 3pm WAT", () => {
     expect(validateCallbackSlot("2026-10-05T14:30:00+01:00", NOW)).toEqual({
       ok: true,

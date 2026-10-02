@@ -19,8 +19,7 @@ export function startOfTodayUtc(now: Date): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
 }
 
-/** Today's voice calls for this account (chats don't count). */
-export async function countVisitorConversationsToday(supabase: SupabaseClient, callerRef: string, now: Date = new Date()): Promise<number> {
+async function rawVoiceCallsToday(supabase: SupabaseClient, callerRef: string, now: Date): Promise<number> {
   const { count, error } = await supabase
     .from("conversations")
     .select("*", { count: "exact", head: true })
@@ -29,6 +28,28 @@ export async function countVisitorConversationsToday(supabase: SupabaseClient, c
     .gte("started_at", startOfTodayUtc(now));
   if (error) throw error;
   return count ?? 0;
+}
+
+/** Today's voice calls since the most recent administrative reset. */
+export async function countVisitorConversationsToday(supabase: SupabaseClient, callerRef: string, now: Date = new Date()): Promise<number> {
+  const day = startOfTodayUtc(now).slice(0, 10);
+  const [rawCount, baseline] = await Promise.all([
+    rawVoiceCallsToday(supabase, callerRef, now),
+    supabase.from("call_limits").select("calls_started").eq("caller_ref", callerRef).eq("day", day).maybeSingle(),
+  ]);
+  if (baseline.error) throw baseline.error;
+  return Math.max(0, rawCount - (baseline.data?.calls_started ?? 0));
+}
+
+/** Resets allowance without deleting or altering conversation history. */
+export async function resetVisitorCallLimit(supabase: SupabaseClient, callerRef: string, now: Date = new Date()): Promise<void> {
+  const callsStarted = await rawVoiceCallsToday(supabase, callerRef, now);
+  const { error } = await supabase.from("call_limits").upsert({
+    caller_ref: callerRef,
+    day: startOfTodayUtc(now).slice(0, 10),
+    calls_started: callsStarted,
+  });
+  if (error) throw error;
 }
 
 export async function checkVisitorDailyLimit(supabase: SupabaseClient, callerRef: string, now: Date = new Date()): Promise<LimitCheck> {

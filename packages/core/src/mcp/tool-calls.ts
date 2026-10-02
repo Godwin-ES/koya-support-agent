@@ -14,6 +14,21 @@ function summarize(value: unknown): string {
   return text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX)}…` : text;
 }
 
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const value = error as Record<string, unknown>;
+    const fields = ["code", "message", "details", "hint"].flatMap((key) => value[key] == null ? [] : [`${key}=${String(value[key])}`]);
+    if (fields.length) return fields.join("; ");
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "Unknown object error";
+    }
+  }
+  return String(error);
+}
+
 /** A handler's own verdict on its result, read by the logging wrapper - result shape stays whatever the tool's contract says. */
 export interface ToolOutcome<T> {
   status: ToolCallStatus;
@@ -39,10 +54,10 @@ export async function callWithLogging<T>(
   try {
     outcome = await run(callContext);
   } catch (err) {
-    errorMessage = err instanceof Error ? err.message : String(err);
+    errorMessage = describeError(err);
     // Never throw out of a tool handler (SYSTEM-DESIGN.md §5) - the caller
     // gets a structured "something went wrong" result, not a crashed call.
-    outcome = { status: "error", result: { error: "internal error" } as T };
+    outcome = { status: "error", result: { error: "internal_error", retryable: false } as T };
   }
 
   const turnSeq = await turnSeqPromise.catch(() => null);
@@ -59,6 +74,34 @@ export async function callWithLogging<T>(
   });
 
   return outcome.result;
+}
+
+export type RepeatedMutationRefusal = { refused: true; reason: "already_attempted_this_turn"; retryable: false };
+
+/** Support writes are never retried or replaced by a different write in one caller turn. */
+export async function callMutationWithLogging<T>(
+  context: ToolContext,
+  toolName: "create_support_ticket" | "create_escalation",
+  purpose: string | undefined,
+  input: unknown,
+  run: (callContext: ToolContext) => Promise<ToolOutcome<T>>,
+): Promise<T | RepeatedMutationRefusal> {
+  const turnSeq = await currentTurnSeq(context);
+  const scopedContext = { ...context, turnSeqPromise: Promise.resolve(turnSeq) };
+  const { count, error } = await context.supabase
+    .from("tool_calls")
+    .select("*", { count: "exact", head: true })
+    .eq("conversation_id", context.conversationId)
+    .eq("turn_seq", turnSeq)
+    .in("tool_name", ["create_support_ticket", "create_escalation"]);
+  if (error) throw error;
+  if ((count ?? 0) > 0) {
+    return callWithLogging(scopedContext, toolName, purpose, input, async () => ({
+      status: "refused",
+      result: { refused: true, reason: "already_attempted_this_turn", retryable: false },
+    }));
+  }
+  return callWithLogging(scopedContext, toolName, purpose, input, run);
 }
 
 export interface LoggedToolCall {

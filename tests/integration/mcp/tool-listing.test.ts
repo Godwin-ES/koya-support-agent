@@ -29,6 +29,10 @@ describe("the MCP server's tools/list", () => {
 
         const listed = await client.listTools();
         expect(listed.tools.map((t) => t.name).sort()).toEqual([...TOOL_NAMES].sort());
+        const escalation = listed.tools.find((tool) => tool.name === "create_escalation");
+        const properties = (escalation?.inputSchema as { properties?: Record<string, unknown> }).properties;
+        expect(properties).toHaveProperty("preferred_time_source");
+        expect(properties).not.toHaveProperty("ticket_id");
       } finally {
         await supabase.from("conversations").delete().eq("id", data.id);
       }

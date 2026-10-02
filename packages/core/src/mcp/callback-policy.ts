@@ -9,6 +9,11 @@ export type CallbackSlotValidation =
 const OFFSET_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 const WEEKDAYS = new Set(["Mon", "Tue", "Wed", "Thu", "Fri"]);
 
+/** True only when the caller's own time phrase resolves the AM/PM ambiguity. */
+export function hasExplicitTimePeriod(source: string): boolean {
+  return /(?:\d|\s)(?:am|pm|a\.m\.|p\.m\.)(?=$|\s|[,.!?])|\b(?:noon|midnight)\b|\b(?:1[3-9]|2[0-3]):[0-5]\d\b/i.test(source);
+}
+
 function localParts(date: Date): { weekday: string; minutes: number } {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: CALLBACK_TIME_ZONE,

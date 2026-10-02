@@ -12,7 +12,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decideTurn } from "@core/agent";
-import { callWithLogging, currentTurnSeq, readTurnToolCalls, type ToolContext } from "@core/mcp";
+import { callMutationWithLogging, callWithLogging, currentTurnSeq, readTurnToolCalls, type ToolContext } from "@core/mcp";
 import { createEscalation } from "@core/mcp/tools/create-escalation";
 import { lookupCustomer } from "@core/mcp/tools/lookup-customer";
 import { lookupPayout } from "@core/mcp/tools/lookup-payout";
@@ -41,7 +41,7 @@ async function loggedLookupPayout(context: ToolContext, input: Parameters<typeof
 async function loggedCreateEscalation(context: ToolContext, input: Parameters<typeof createEscalation>[1]) {
   return callWithLogging(context, "create_escalation", "hand the caller off to human support", input, async () => {
     const result = await createEscalation(context, input);
-    return { status: "refused" in result ? ("refused" as const) : ("ok" as const), result };
+    return { status: "refused" in result || "confirmation_required" in result ? ("refused" as const) : ("ok" as const), result };
   });
 }
 
@@ -67,6 +67,33 @@ afterEach(async () => {
 });
 
 describe("recorded-session replay through the real MCP tools", () => {
+  it("preserves useful structured database errors without inviting a retry", async () => {
+    const conversationId = await newConversation();
+    const context: ToolContext = { supabase, conversationId };
+    const result = await callWithLogging(context, "create_escalation", "test failure", {}, async () => {
+      throw { code: "23514", message: "violates callback business-hours constraint", details: "Saturday is unavailable" };
+    });
+
+    expect(result).toEqual({ error: "internal_error", retryable: false });
+    const { data } = await supabase.from("tool_calls").select("error_message").eq("conversation_id", conversationId).single();
+    expect(data?.error_message).toContain("23514");
+    expect(data?.error_message).toContain("callback business-hours constraint");
+  });
+
+  it("allows only one support mutation attempt in a turn", async () => {
+    const conversationId = await newConversation();
+    const context: ToolContext = { supabase, conversationId };
+    let runs = 0;
+    const invoke = () => callMutationWithLogging(context, "create_escalation", "book callback", {}, async () => {
+      runs++;
+      return { status: "refused" as const, result: { refused: true, reason: "weekend" } };
+    });
+
+    expect(await invoke()).toEqual({ refused: true, reason: "weekend" });
+    expect(await invoke()).toEqual({ refused: true, reason: "already_attempted_this_turn", retryable: false });
+    expect(runs).toBe(1);
+  });
+
   it("Scenario 3 (customer lookup): a verified lookup replays to answer_type 'answer'", async () => {
     const conversationId = await newConversation("CUS-1001");
     const context: ToolContext = { supabase, conversationId };
@@ -94,10 +121,16 @@ describe("recorded-session replay through the real MCP tools", () => {
       expect(decideTurn({ toolCalls: lookupToolCalls }).answer_type).toBe("answer"); // the lookup itself succeeded (found: true) - the turn escalates only once create_escalation is actually called, next turn
       await recordTurn(context, lookupSeq, "What is happening with payout PAY-7002?", "That payout needs compliance review - let me connect you with a specialist.");
 
-      // Turn 2: the agent actually escalates, per the payout's own guidance.
+      // Turn 2 proposes the escalation; turn 3 performs it after explicit confirmation.
+      const proposalSeq = await currentTurnSeq(context);
+      expect(proposalSeq).toBe(lookupSeq + 1);
+      const details = { user_name: "Efua Mensah", user_email: "efua@accrastack.example", category: "compliance", reason: "Payout PAY-7002 needs compliance review." };
+      const proposal = await loggedCreateEscalation(context, details) as { confirmation_key: string };
+      expect(proposal.confirmation_key).toEqual(expect.any(String));
+      await recordTurn(context, proposalSeq, "Please escalate it.", "I can create that escalation. Would you like me to proceed?");
+
       const escalateSeq = await currentTurnSeq(context);
-      expect(escalateSeq).toBe(lookupSeq + 1);
-      const escalation = await loggedCreateEscalation(context, { user_name: "Efua Mensah", user_email: "efua@accrastack.example", category: "compliance", reason: "Payout PAY-7002 needs compliance review." });
+      const escalation = await loggedCreateEscalation(context, { ...details, confirmed: true, confirmation_key: proposal.confirmation_key });
       expect("escalation_id" in escalation).toBe(true);
       const escalateToolCalls = await readTurnToolCalls(context, escalateSeq);
       expect(decideTurn({ toolCalls: escalateToolCalls }).answer_type).toBe("escalate");

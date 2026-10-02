@@ -132,16 +132,20 @@ export function useVoiceCall(accessToken: string | null, options: { greeting?: s
     }).catch(() => undefined);
   }, []);
 
-  const syncRecordedTurns = useCallback(async () => {
+  const syncRecordedTurns = useCallback(async (finalReconciliation = false) => {
     const conversation = conversationRef.current;
     if (!conversation) return;
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/conversations/${conversation.id}/turns`, { headers: { Authorization: `Bearer ${conversation.token}` } });
       if (!res.ok) return;
       const body = (await res.json()) as { turns?: RecordedTurn[] };
-      if (!Array.isArray(body.turns) || body.turns.length <= recordedTurnCountRef.current) return;
-      recordedTurnCountRef.current = body.turns.length;
-      setRecorded(body.turns.flatMap((t) => [{ role: "user" as const, text: t.user_transcript }, ...(t.assistant_response ? [{ role: "assistant" as const, text: t.assistant_response }] : [])]));
+      if (!Array.isArray(body.turns)) return;
+      if (body.turns.length > recordedTurnCountRef.current) {
+        recordedTurnCountRef.current = body.turns.length;
+        setRecorded(body.turns.flatMap((t) => [{ role: "user" as const, text: t.user_transcript }, ...(t.assistant_response ? [{ role: "assistant" as const, text: t.assistant_response }] : [])]));
+      } else if (!finalReconciliation) {
+        return;
+      }
       // Read *after* the fetch resolves, not before it starts: Vapi's own
       // live caption lines for this same reply keep arriving while the
       // request is in flight (a real call showed the tail of a reply
@@ -190,7 +194,7 @@ export function useVoiceCall(accessToken: string | null, options: { greeting?: s
       vapi.on("call-end", () => {
         tonesRef.current?.stopConnecting();
         setSupportActivity(null);
-        void syncRecordedTurns();
+        void syncRecordedTurns(true);
         // "What happens next" comes from the records this call created
         // (SYSTEM-DESIGN.md §11.7), fetched once it ends - not from the
         // agent's last spoken line, which Vapi delivers a clause at a time

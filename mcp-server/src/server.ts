@@ -12,6 +12,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { CreateSupportTicketResult, LogConversationEventResult, ToolContext } from "@core/mcp";
 import {
+  callMutationWithLogging,
   callWithLogging,
   createEscalation,
   createSupportTicket,
@@ -115,7 +116,7 @@ export function createServer(context: ToolContext): McpServer {
         conversation_id: z.string().optional(),
       },
     },
-    async (input) => textResult(await callWithLogging<CreateSupportTicketResult | typeof REFUSED_CONVERSATION_MISMATCH>(context, "create_support_ticket", "log an issue for support follow-up", input, async (callContext) => {
+    async (input) => textResult(await callMutationWithLogging<CreateSupportTicketResult | typeof REFUSED_CONVERSATION_MISMATCH>(context, "create_support_ticket", "log an issue for support follow-up", input, async (callContext) => {
       if (!matchesConversation(callContext, input.conversation_id)) return { status: "refused", result: REFUSED_CONVERSATION_MISMATCH };
       const result = await createSupportTicket(callContext, input);
       return { status: "refused" in result || "confirmation_required" in result ? "refused" : "ok", result };
@@ -126,18 +127,18 @@ export function createServer(context: ToolContext): McpServer {
     {
       description: "Propose, then after explicit caller confirmation on a later turn, create a human escalation or callback booking. The first call returns a confirmation key and creates nothing.",
       inputSchema: {
-        ticket_id: z.string().optional(),
         customer_id: z.string().optional(),
         user_name: z.string().optional().describe("Leave out for a signed-in customer - their account's name is used."),
         user_email: z.string().optional().describe("Leave out for a signed-in customer - their account's email is used."),
         category: z.string().describe('Exactly one of: "compliance", "account", "dispute", "payment", "other". KYC and identity-verification reviews are "compliance".'),
         reason: z.string().min(1),
         preferred_time: z.string().optional().describe("The callback time the caller asked for, as ISO-8601 with an offset (e.g. 2026-10-01T10:00:00+01:00). Required whenever the caller gave a time."),
+        preferred_time_source: z.string().optional().describe("Required with preferred_time: copy the caller's exact spoken time phrase, such as 'next Monday at 2 PM'. Never add AM or PM if the caller did not say it."),
         confirmed: z.boolean().optional().describe("Set true only after the caller explicitly accepted the complete proposal on a later turn."),
         confirmation_key: z.string().optional().describe("The exact key returned by the earlier matching proposal."),
       },
     },
-    async (input) => textResult(await callWithLogging(context, "create_escalation", "hand the caller off to human support", input, async (callContext) => {
+    async (input) => textResult(await callMutationWithLogging(context, "create_escalation", "hand the caller off to human support", input, async (callContext) => {
       const result = await createEscalation(callContext, input);
       return { status: "refused" in result || "confirmation_required" in result ? "refused" : "ok", result };
     })),

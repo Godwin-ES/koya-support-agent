@@ -1,17 +1,20 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { checkChatMessage, checkVisitorDailyLimit, countVisitorConversationsToday, DAILY_CALL_LIMIT } from "@core/agent/limits";
+import { checkChatMessage, checkVisitorDailyLimit, countVisitorConversationsToday, DAILY_CALL_LIMIT, resetVisitorCallLimit } from "@core/agent/limits";
 import { serviceRoleClient } from "../helpers/db";
 
 const supabase: SupabaseClient = serviceRoleClient();
 const conversationIds: string[] = [];
+const callerRefs: string[] = [];
 
 afterEach(async () => {
   for (const id of conversationIds.splice(0)) await supabase.from("conversations").delete().eq("id", id);
+  for (const callerRef of callerRefs.splice(0)) await supabase.from("call_limits").delete().eq("caller_ref", callerRef);
 });
 
 async function newConversationFor(callerRef: string, startedAt?: string, channel: "web_voice" | "web_text" = "web_voice"): Promise<void> {
+  if (!callerRefs.includes(callerRef)) callerRefs.push(callerRef);
   const { data, error } = await supabase
     .from("conversations")
     .insert({ channel, caller_ref: callerRef, ...(startedAt ? { started_at: startedAt } : {}) })
@@ -22,6 +25,19 @@ async function newConversationFor(callerRef: string, startedAt?: string, channel
 }
 
 describe("checkVisitorDailyLimit", () => {
+  it("resets today's allowance without deleting conversation history", async () => {
+    const callerRef = `test-visitor-${crypto.randomUUID()}`;
+    for (let i = 0; i < DAILY_CALL_LIMIT; i++) await newConversationFor(callerRef);
+    expect(await checkVisitorDailyLimit(supabase, callerRef)).toEqual({ allowed: false, reason: "daily_limit_reached" });
+
+    await resetVisitorCallLimit(supabase, callerRef);
+
+    expect(await countVisitorConversationsToday(supabase, callerRef)).toBe(0);
+    expect(await checkVisitorDailyLimit(supabase, callerRef)).toEqual({ allowed: true });
+    const { count } = await supabase.from("conversations").select("*", { count: "exact", head: true }).eq("caller_ref", callerRef);
+    expect(count).toBe(DAILY_CALL_LIMIT);
+  });
+
   it("allows a visitor with no calls today", async () => {
     const result = await checkVisitorDailyLimit(supabase, `test-visitor-${crypto.randomUUID()}`);
     expect(result).toEqual({ allowed: true });

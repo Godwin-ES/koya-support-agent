@@ -256,6 +256,36 @@ describe("useVoiceCall - the transcript", () => {
     ]);
   });
 
+  it("drops transcript fragments that arrive after an early server sync when the call ends", async () => {
+    const { result } = renderHook(() => useVoiceCall("test-access-token"));
+    await act(async () => {
+      await result.current.startCall();
+    });
+    act(() => {
+      stub.emit("call-start");
+      stub.emit("message", line("user", "Can you book that?"));
+      stub.emit("speech-start");
+      stub.emit("message", line("assistant", "I couldn't book that."));
+      stub.emit("speech-end");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+    });
+    act(() => {
+      stub.emit("message", line("assistant", " Please choose another weekday."));
+      stub.emit("call-end");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.fullTranscript).toEqual([
+      { role: "assistant", text: "Thanks for calling RelayPay support. How can I help you today?" },
+      { role: "user", text: "What fee do you charge for international payments?" },
+      { role: "assistant", text: "Fees vary by corridor, and you see the exact fee before you confirm." },
+    ]);
+  });
+
   it("replaces Vapi's fragmented lines with the recorded turn once the agent finishes speaking, keeping the greeting", async () => {
     const greeting = "Hi Amara, thanks for calling RelayPay support. How can I help you today?";
     const { result } = renderHook(() => useVoiceCall("test-access-token", { greeting }));

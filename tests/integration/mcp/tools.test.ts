@@ -210,12 +210,23 @@ describe("create_support_ticket", () => {
 
 describe("create_escalation", () => {
   it("reads back the full callback details and books only after later confirmation", async () => {
-    const details = { user_name: "A", user_email: "a@example.com", category: "other", reason: "Needs a specialist.", preferred_time: "2026-10-05T14:00:00+01:00" };
+    const details = { user_name: "A", user_email: "a@example.com", category: "other", reason: "Needs a specialist.", preferred_time: "2026-10-05T14:00:00+01:00", preferred_time_source: "Monday at 2 PM" };
     const proposal = await createEscalation(context, details) as { confirmation_required: true; confirmation_key: string; confirmation_summary: string };
     expect(proposal).toMatchObject({ confirmation_required: true, confirmation_key: expect.any(String), confirmation_summary: expect.stringContaining("Monday, October 5 at 2:00 PM WAT") });
     expect((await supabase.from("escalations").select("id", { count: "exact", head: true }).eq("conversation_id", context.conversationId)).count).toBe(0);
     await advanceTurn();
     expect(await createEscalation(context, { ...details, confirmed: true, confirmation_key: proposal.confirmation_key })).toMatchObject({ status: "open", follow_up_summary: expect.stringContaining("Monday, October 5 at 2:00 PM WAT") });
+  });
+
+  it("refuses an ambiguous spoken time before creating a proposal", async () => {
+    expect(await createEscalation(context, {
+      user_name: "A",
+      user_email: "a@example.com",
+      category: "other",
+      reason: "Needs a specialist.",
+      preferred_time: "2026-10-05T14:00:00+01:00",
+      preferred_time_source: "next Monday by 2",
+    })).toMatchObject({ refused: true, reason: "missing_time_period" });
   });
 
   it.each([
@@ -224,7 +235,7 @@ describe("create_escalation", () => {
     ["2026-10-01T10:00:00+01:00", "past_time"],
     ["2026-10-05T10:00:00", "invalid_time"],
   ])("refuses invalid callback slot %s", async (preferred_time, reason) => {
-    expect(await createEscalation(context, { user_name: "A", user_email: "a@example.com", category: "other", reason: "r", preferred_time })).toMatchObject({ refused: true, reason });
+    expect(await createEscalation(context, { user_name: "A", user_email: "a@example.com", category: "other", reason: "r", preferred_time, preferred_time_source: "at 10 AM" })).toMatchObject({ refused: true, reason });
   });
 
   it("enforces exact and partial callback overlaps atomically without orphan tickets", async () => {
@@ -301,12 +312,12 @@ describe("create_escalation", () => {
 
   it("books a call only when a preferred_time is given", async () => {
     const preferredTime = "2026-10-06T10:00:00+01:00";
-    const booked = await confirmEscalation({ user_name: "A", user_email: "a@example.com", category: "other", reason: "r", preferred_time: preferredTime });
+    const booked = await confirmEscalation({ user_name: "A", user_email: "a@example.com", category: "other", reason: "r", preferred_time: preferredTime, preferred_time_source: "Monday at 2 PM" });
     expect("follow_up_summary" in booked && booked.follow_up_summary).toContain("Tuesday, October 6 at 10:00 AM WAT");
   });
 
   it("refuses a preferred_time that isn't a machine-readable timestamp - callback_time is timestamptz, not free text", async () => {
-    const result = await createEscalation(context, { user_name: "A", user_email: "a@example.com", category: "other", reason: "r", preferred_time: "tomorrow 10am" });
+    const result = await createEscalation(context, { user_name: "A", user_email: "a@example.com", category: "other", reason: "r", preferred_time: "tomorrow 10am", preferred_time_source: "tomorrow at 10 AM" });
     expect(result).toMatchObject({ refused: true, reason: "invalid_time" });
     expect((result as { hint?: string }).hint).toMatch(/ISO-8601/);
   });
