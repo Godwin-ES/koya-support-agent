@@ -149,6 +149,52 @@ describe("create_support_ticket", () => {
 });
 
 describe("create_escalation", () => {
+  it("enforces exact and partial callback overlaps atomically without orphan tickets", async () => {
+    const extraConversationIds: string[] = [];
+    const createConversation = async () => {
+      const { data, error } = await supabase.from("conversations").insert({ channel: "web_text" }).select("id").single();
+      if (error) throw error;
+      extraConversationIds.push(data.id as string);
+      return data.id as string;
+    };
+    const book = async (conversationId: string, callbackTime: string) => {
+      const { data, error } = await supabase.rpc("create_confirmed_escalation", {
+        p_conversation_id: conversationId,
+        p_customer_id: null,
+        p_user_name: "Test Caller",
+        p_user_email: "caller@example.com",
+        p_category: "other",
+        p_reason: "Requested a callback.",
+        p_callback_time: callbackTime,
+        p_ticket_id: null,
+      });
+      if (error) throw error;
+      return (data as Array<{ outcome: "created" | "existing" | "slot_unavailable" }>)[0]!.outcome;
+    };
+
+    try {
+      expect(await book(context.conversationId, "2026-11-02T14:00:00+01:00")).toBe("created");
+      expect(await book(await createConversation(), "2026-11-02T14:15:00+01:00")).toBe("slot_unavailable");
+      expect(await book(await createConversation(), "2026-11-02T14:30:00+01:00")).toBe("created");
+
+      const concurrentIds = [await createConversation(), await createConversation()];
+      const outcomes = await Promise.all(concurrentIds.map((id) => book(id, "2026-11-03T10:00:00+01:00")));
+      expect([...outcomes].sort()).toEqual(["created", "slot_unavailable"]);
+
+      const losingConversationId = concurrentIds[outcomes.indexOf("slot_unavailable")];
+      const { count, error } = await supabase
+        .from("support_tickets")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", losingConversationId);
+      if (error) throw error;
+      expect(count).toBe(0);
+    } finally {
+      if (extraConversationIds.length > 0) {
+        await supabase.from("conversations").delete().in("id", extraConversationIds);
+      }
+    }
+  });
+
   it("creates an escalation, a linked ticket, and a follow_up_summary", async () => {
     const result = await createEscalation(context, {
       user_name: "Test Caller",

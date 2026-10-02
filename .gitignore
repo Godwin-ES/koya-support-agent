@@ -24,3 +24,4 @@ tests/fixtures/voice/live/
 # Local Superpowers design and implementation workflow artifacts
 docs/superpowers/
 .worktrees/
+supabase/.temp/
