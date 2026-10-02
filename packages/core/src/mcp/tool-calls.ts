@@ -25,13 +25,15 @@ export async function callWithLogging<T>(
   toolName: string,
   purpose: string | undefined,
   input: unknown,
-  run: () => Promise<ToolOutcome<T>>,
+  run: (callContext: ToolContext) => Promise<ToolOutcome<T>>,
 ): Promise<T> {
   const startedAt = Date.now();
+  const turnSeqPromise = currentTurnSeq(context);
+  const callContext: ToolContext = { ...context, turnSeqPromise };
   let outcome: ToolOutcome<T>;
   let errorMessage: string | null = null;
   try {
-    outcome = await run();
+    outcome = await run(callContext);
   } catch (err) {
     errorMessage = err instanceof Error ? err.message : String(err);
     // Never throw out of a tool handler (SYSTEM-DESIGN.md §5) - the caller
@@ -39,7 +41,7 @@ export async function callWithLogging<T>(
     outcome = { status: "error", result: { error: "internal error" } as T };
   }
 
-  const turnSeq = await currentTurnSeq(context).catch(() => null);
+  const turnSeq = await turnSeqPromise.catch(() => null);
   await context.supabase.from("tool_calls").insert({
     conversation_id: context.conversationId,
     turn_seq: turnSeq,

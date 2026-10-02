@@ -171,12 +171,14 @@ export function useVoiceCall(accessToken: string | null, options: { greeting?: s
         }
         attempt.connected = true;
         tonesRef.current?.stopConnecting();
+        setSupportActivity(null);
         callStartedAtRef.current = Date.now();
         lastActivityAtRef.current = Date.now();
         setCallState("listening");
       });
       vapi.on("speech-start", () => {
         tonesRef.current?.stopConnecting();
+        setSupportActivity(null);
         lastActivityAtRef.current = Date.now();
         setCallState("agent_speaking");
       });
@@ -264,6 +266,7 @@ export function useVoiceCall(accessToken: string | null, options: { greeting?: s
     liveLineCountRef.current = 0;
     recordedTurnCountRef.current = 0;
     setEndOfCallSummary(null);
+    setSupportActivity(null);
     setRemainingSeconds(null);
     setPartial(null);
     endedDueToSilenceRef.current = false;
@@ -369,7 +372,6 @@ export function useVoiceCall(accessToken: string | null, options: { greeting?: s
 
   useEffect(() => {
     if (callState !== "agent_thinking") {
-      setSupportActivity(null);
       return;
     }
     const attempt = activeAttemptRef.current;

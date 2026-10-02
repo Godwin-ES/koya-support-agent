@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { formatChatCompletionChunk, newUserMessage, parseChatCompletionsBody, parseVapiEventBody, SSE_DONE } from "@core/agent/vapi";
+import { formatChatCompletionChunk, newUserMessage, parseChatCompletionsBody, parseVapiEventBody, SSE_DONE, VAPI_START_SPEAKING_PLAN } from "@core/agent/vapi";
+
+it("uses LiveKit smart endpointing with a fast 0.4 second minimum wait", () => {
+  expect(VAPI_START_SPEAKING_PLAN).toMatchObject({ waitSeconds: 0.4, smartEndpointingPlan: { provider: "livekit" } });
+});
 
 describe("parseChatCompletionsBody", () => {
   it("parses a real Vapi custom-llm request shape (call.assistantOverrides.metadata - verified against a real live call, Task 13)", () => {

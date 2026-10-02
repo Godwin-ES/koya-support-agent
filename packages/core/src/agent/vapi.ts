@@ -63,6 +63,12 @@ export function formatChatCompletionChunk(text: string, opts: { id: string; mode
 
 export const SSE_DONE = "data: [DONE]\n\n";
 
+export const VAPI_START_SPEAKING_PLAN = {
+  waitSeconds: 0.4,
+  smartEndpointingPlan: { provider: "livekit" as const },
+  transcriptionEndpointingPlan: { onPunctuationSeconds: 0.5, onNoPunctuationSeconds: 2.0, onNumberSeconds: 1.0 },
+};
+
 // -- /vapi/events (server-message webhooks) --------------------------------
 // Confirmed against Vapi's docs (docs.vapi.ai/server-url/events), not
 // assumed: every server-message is nested under a `message` key, `type`

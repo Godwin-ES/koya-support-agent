@@ -11,6 +11,8 @@ export interface ToolContext {
   conversationId: string;
   /** Trusted scope hydrated from the conversation row, never model input. */
   accessScope?: AccessScope;
+  /** One in-flight tool call can share this lookup across handler and audit logging. */
+  turnSeqPromise?: Promise<number>;
 }
 
 export const GUEST_SCOPE_REFUSAL = { refused: true as const, reason: "guest_scope" as const };
@@ -28,6 +30,7 @@ export function isGuestScope(context: ToolContext): boolean {
  * happen mid-turn are always counted as the next one.
  */
 export async function currentTurnSeq(context: ToolContext): Promise<number> {
+  if (context.turnSeqPromise) return await context.turnSeqPromise;
   const { count, error } = await context.supabase
     .from("conversation_turns")
     .select("*", { count: "exact", head: true })

@@ -39,8 +39,8 @@ export function createServer(context: ToolContext): McpServer {
       description: "Retrieve approved RelayPay knowledge relevant to the caller's question.",
       inputSchema: { query: z.string().min(1) },
     },
-    async (input) => textResult(await callWithLogging(context, "search_knowledge", "retrieve knowledge for the caller's question", input, async () => {
-      const result = await searchKnowledge(context, input);
+    async (input) => textResult(await callWithLogging(context, "search_knowledge", "retrieve knowledge for the caller's question", input, async (callContext) => {
+      const result = await searchKnowledge(callContext, input);
       return { status: result.found ? "ok" : "not_found", result };
     })),
   );
@@ -56,9 +56,9 @@ export function createServer(context: ToolContext): McpServer {
         contact_name: z.string().optional(),
       },
     },
-    async (input) => textResult(await callWithLogging(context, "lookup_customer", "look up the signed-in caller's own account", input, async () => {
-      const result = await lookupCustomer(context, input);
-      return { status: result.found ? "ok" : "not_found", result };
+    async (input) => textResult(await callWithLogging(context, "lookup_customer", "look up the signed-in caller's own account", input, async (callContext) => {
+      const result = await lookupCustomer(callContext, input);
+      return { status: "refused" in result ? "refused" : result.found ? "ok" : "not_found", result };
     })),
   );
 
@@ -68,9 +68,9 @@ export function createServer(context: ToolContext): McpServer {
       description: "Look up one of the signed-in caller's own transactions by its reference. Other customers' transactions are never returned.",
       inputSchema: { transaction_id: z.string().min(1) },
     },
-    async (input) => textResult(await callWithLogging(context, "lookup_transaction", "look up a transaction the caller referenced", input, async () => {
-      const result = await lookupTransaction(context, input);
-      return { status: result.found ? "ok" : "not_found", result };
+    async (input) => textResult(await callWithLogging(context, "lookup_transaction", "look up a transaction the caller referenced", input, async (callContext) => {
+      const result = await lookupTransaction(callContext, input);
+      return { status: "refused" in result ? "refused" : result.found ? "ok" : "not_found", result };
     })),
   );
 
@@ -83,9 +83,9 @@ export function createServer(context: ToolContext): McpServer {
         transaction_id: z.string().optional(),
       },
     },
-    async (input) => textResult(await callWithLogging(context, "lookup_payout", "look up a payout the caller referenced", input, async () => {
-      const result = await lookupPayout(context, input);
-      return { status: result.found ? "ok" : "not_found", result };
+    async (input) => textResult(await callWithLogging(context, "lookup_payout", "look up a payout the caller referenced", input, async (callContext) => {
+      const result = await lookupPayout(callContext, input);
+      return { status: "refused" in result ? "refused" : result.found ? "ok" : "not_found", result };
     })),
   );
 
@@ -95,9 +95,9 @@ export function createServer(context: ToolContext): McpServer {
       description: "List the signed-in caller's own recent transactions and payouts (up to 10 of each), with each one's status - for when they ask what's on their account or what's going on, without a reference. Takes no input: the caller comes from their sign-in.",
       inputSchema: {},
     },
-    async () => textResult(await callWithLogging(context, "list_account_activity", "list the caller's recent account activity", {}, async () => {
-      const result = await listAccountActivity(context);
-      return { status: result.found ? "ok" : "not_found", result };
+    async () => textResult(await callWithLogging(context, "list_account_activity", "list the caller's recent account activity", {}, async (callContext) => {
+      const result = await listAccountActivity(callContext);
+      return { status: "refused" in result ? "refused" : result.found ? "ok" : "not_found", result };
     })),
   );
 
@@ -115,9 +115,9 @@ export function createServer(context: ToolContext): McpServer {
         conversation_id: z.string().optional(),
       },
     },
-    async (input) => textResult(await callWithLogging<CreateSupportTicketResult | typeof REFUSED_CONVERSATION_MISMATCH>(context, "create_support_ticket", "log an issue for support follow-up", input, async () => {
-      if (!matchesConversation(context, input.conversation_id)) return { status: "refused", result: REFUSED_CONVERSATION_MISMATCH };
-      const result = await createSupportTicket(context, input);
+    async (input) => textResult(await callWithLogging<CreateSupportTicketResult | typeof REFUSED_CONVERSATION_MISMATCH>(context, "create_support_ticket", "log an issue for support follow-up", input, async (callContext) => {
+      if (!matchesConversation(callContext, input.conversation_id)) return { status: "refused", result: REFUSED_CONVERSATION_MISMATCH };
+      const result = await createSupportTicket(callContext, input);
       return { status: "refused" in result || "confirmation_required" in result ? "refused" : "ok", result };
     })),
   );
@@ -137,8 +137,8 @@ export function createServer(context: ToolContext): McpServer {
         confirmation_key: z.string().optional().describe("The exact key returned by the earlier matching proposal."),
       },
     },
-    async (input) => textResult(await callWithLogging(context, "create_escalation", "hand the caller off to human support", input, async () => {
-      const result = await createEscalation(context, input);
+    async (input) => textResult(await callWithLogging(context, "create_escalation", "hand the caller off to human support", input, async (callContext) => {
+      const result = await createEscalation(callContext, input);
       return { status: "refused" in result || "confirmation_required" in result ? "refused" : "ok", result };
     })),
   );
@@ -154,9 +154,9 @@ export function createServer(context: ToolContext): McpServer {
         metadata: z.unknown().optional(),
       },
     },
-    async (input) => textResult(await callWithLogging<LogConversationEventResult | typeof REFUSED_CONVERSATION_MISMATCH>(context, "log_conversation_event", "log an agent decision or notable action", input, async () => {
-      if (!matchesConversation(context, input.conversation_id)) return { status: "refused", result: REFUSED_CONVERSATION_MISMATCH };
-      const result = await logConversationEvent(context, {
+    async (input) => textResult(await callWithLogging<LogConversationEventResult | typeof REFUSED_CONVERSATION_MISMATCH>(context, "log_conversation_event", "log an agent decision or notable action", input, async (callContext) => {
+      if (!matchesConversation(callContext, input.conversation_id)) return { status: "refused", result: REFUSED_CONVERSATION_MISMATCH };
+      const result = await logConversationEvent(callContext, {
         event_type: input.event_type,
         summary: input.summary,
         metadata: (input.metadata as Record<string, unknown> | undefined) ?? {},

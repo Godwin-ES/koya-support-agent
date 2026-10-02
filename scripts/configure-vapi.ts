@@ -14,6 +14,7 @@
 //
 //   BASE_URL=https://<tunnel-or-app-url> npx tsx scripts/configure-vapi.ts
 import { config } from "dotenv";
+import { VAPI_START_SPEAKING_PLAN } from "@core/agent";
 config({ path: ".env.local", quiet: true });
 
 const VAPI_PRIVATE_KEY = process.env.VAPI_PRIVATE_KEY;
@@ -49,12 +50,9 @@ const assistant = {
   // and the rest of the sentence became a second, overlapping turn).
   // LiveKit's smart endpointing - which the type docs "strongly recommend"
   // for English - judges from the words whether the thought is finished; a
-  // longer minimum wait and slower transcription fallbacks back it up.
-  startSpeakingPlan: {
-    waitSeconds: 0.8,
-    smartEndpointingPlan: { provider: "livekit" as const },
-    transcriptionEndpointingPlan: { onPunctuationSeconds: 0.5, onNoPunctuationSeconds: 2.0, onNumberSeconds: 1.0 },
-  },
+  // a short minimum wait improves responsiveness while conservative
+  // transcription fallbacks still protect unfinished sentences.
+  startSpeakingPlan: VAPI_START_SPEAKING_PLAN,
   // Privacy note on the voice page promises this - transcripts only, never
   // a recording. Verified against Vapi's live OpenAPI spec (Task 13): this
   // is `artifactPlan.recordingEnabled`, not a top-level assistant field -
