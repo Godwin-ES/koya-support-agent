@@ -25,6 +25,83 @@ class StubVapi {
   });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe("useVoiceCall - pre-connect cancellation", () => {
+  let stub: StubVapi;
+
+  beforeEach(() => {
+    stub = new StubVapi();
+    (globalThis as { __VAPI_STUB__?: StubVapi }).__VAPI_STUB__ = stub;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (globalThis as { __VAPI_STUB__?: StubVapi }).__VAPI_STUB__;
+  });
+
+  it("ends immediately while conversation creation is pending, then cancels the late row without starting Vapi", async () => {
+    const creation = deferred<Response>();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      if (String(url).endsWith("/api/conversations")) return creation.promise;
+      return new Response(JSON.stringify({ ended: true }), { status: 200 });
+    });
+    const { result } = renderHook(() => useVoiceCall("test-access-token"));
+    let start!: Promise<void>;
+    act(() => { start = result.current.startCall(); });
+    expect(result.current.callState).toBe("requesting");
+    act(() => result.current.endCall());
+    expect(result.current.callState).toBe("ended");
+
+    creation.resolve(new Response(JSON.stringify({ conversation_id: "late", token: "late-token" }), { status: 200 }));
+    await act(async () => { await start; });
+    expect(stub.start).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/conversations/late/cancel"), expect.objectContaining({ method: "POST" }));
+    expect(result.current.callState).toBe("ended");
+  });
+
+  it("stops and cancels when the user ends while Vapi.start is still pending", async () => {
+    const starting = deferred<null>();
+    stub.start.mockReturnValueOnce(starting.promise);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      if (String(url).endsWith("/api/conversations")) return new Response(JSON.stringify({ conversation_id: "c1", token: "t1" }), { status: 200 });
+      return new Response(JSON.stringify({ ended: true }), { status: 200 });
+    });
+    const { result } = renderHook(() => useVoiceCall("test-access-token"));
+    let start!: Promise<void>;
+    act(() => { start = result.current.startCall(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(result.current.callState).toBe("connecting");
+    act(() => result.current.endCall());
+    expect(result.current.callState).toBe("ended");
+    starting.resolve(null);
+    await act(async () => { await start; });
+    expect(stub.stop).toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/conversations/c1/cancel"), expect.anything());
+    expect(result.current.callState).toBe("ended");
+  });
+
+  it("cancels a late-created row when the component unmounts", async () => {
+    const creation = deferred<Response>();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      if (String(url).endsWith("/api/conversations")) return creation.promise;
+      return new Response(JSON.stringify({ ended: true }), { status: 200 });
+    });
+    const { result, unmount } = renderHook(() => useVoiceCall("test-access-token"));
+    let start!: Promise<void>;
+    act(() => { start = result.current.startCall(); });
+    unmount();
+    creation.resolve(new Response(JSON.stringify({ conversation_id: "orphan", token: "orphan-token" }), { status: 200 }));
+    await act(async () => { await start; });
+    expect(stub.start).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/conversations/orphan/cancel"), expect.objectContaining({ keepalive: true }));
+  });
+});
+
 describe("useVoiceCall - timers", () => {
   let stub: StubVapi;
 

@@ -201,6 +201,31 @@ export function createApp(deps: AppDeps) {
     }
   });
 
+  // Cancels a call attempt that the browser ended before Vapi connected.
+  // The conversation token is enough authority and makes retries safe.
+  app.post("/api/conversations/:id/cancel", async (req: Request, res: Response) => {
+    const conversationId = String(req.params.id);
+    const body = (req.body ?? {}) as { token?: string };
+    const token = req.header("authorization")?.match(/^Bearer (.+)$/i)?.[1] ?? body.token;
+    if (!token || !verifyConversationToken(deps.conversationTokenSecret, token, conversationId)) {
+      res.status(401).json({ error: "invalid or expired token" });
+      return;
+    }
+
+    sessionManager.close(conversationId);
+    try {
+      await finalizeConversation(supabase, conversationId, {
+        endedReason: "cancelled_before_connect",
+        finalStatus: "abandoned",
+        suppressCompletion: true,
+      });
+      res.json({ ended: true });
+    } catch (err) {
+      console.error("cancelling voice conversation failed:", err);
+      res.status(500).json({ error: "internal error" });
+    }
+  });
+
   // -- POST /api/conversations/resume ----------------------------------------
   // Back into an open chat after a refresh, a closed tab or another device:
   // the page only ever held the conversation's token in memory. The signed-in

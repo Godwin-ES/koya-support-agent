@@ -38,6 +38,20 @@ async function addTurn(conversationId: string, seq: number, answerType: string, 
 }
 
 describe("finalizeConversation", () => {
+  it("can mark a pre-connect cancellation abandoned without summary work", async () => {
+    const id = await newConversation({ channel: "web_voice", caller_ref: `cancel-test-${crypto.randomUUID()}` });
+    let summarized = false;
+    expect(await finalizeConversation(supabase, id, {
+      endedReason: "cancelled_before_connect",
+      finalStatus: "abandoned",
+      suppressCompletion: true,
+      summarize: async () => { summarized = true; return "should not run"; },
+    })).toBe(true);
+    const { data } = await supabase.from("conversations").select("ended_reason, final_status, summary").eq("id", id).single();
+    expect(data).toMatchObject({ ended_reason: "cancelled_before_connect", final_status: "abandoned", summary: null });
+    expect(summarized).toBe(false);
+  });
+
   it("ends the conversation once, with a built summary and the summed turn cost", async () => {
     const id = await newConversation({ channel: "web_text", caller_ref: null });
     await addTurn(id, 1, "answer", 0.012);

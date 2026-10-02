@@ -35,6 +35,8 @@ export interface FinalizeOptions {
   summarize?: ConversationSummarizer;
   /** Return as soon as the conversation is marked ended; write the summary, cost and notification afterwards. */
   inBackground?: boolean;
+  /** A zero-turn pre-connect cancellation needs no summary, model work, or activity notification. */
+  suppressCompletion?: boolean;
 }
 
 /** Returns false when the conversation was already ended (every end signal can arrive more than once). */
@@ -50,6 +52,7 @@ export async function finalizeConversation(supabase: SupabaseClient, conversatio
   if (error) throw error;
   const conversation = ended?.[0] as EndedConversation | undefined;
   if (!conversation) return false;
+  if (options.suppressCompletion) return true;
 
   // Ended from here on - a message arriving now is refused. The rest (summary,
   // cost, notification) can follow in the background when asked to.

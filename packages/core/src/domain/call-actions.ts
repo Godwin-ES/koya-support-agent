@@ -21,7 +21,7 @@ export function deriveCallActions(state: CallState): CallActions {
     case "idle":
       return { startCall: enabled(), endCall: HIDDEN, typeInstead: enabled(), statusLine: "Talk to RelayPay support" };
     case "requesting":
-      return { startCall: disabled("Connecting…", "Connecting…"), endCall: HIDDEN, typeInstead: disabled(CONNECTING_REASON), statusLine: "Connecting…" };
+      return { startCall: disabled("Connecting…", "Connecting…"), endCall: enabled(), typeInstead: disabled(CONNECTING_REASON), statusLine: "Connecting…" };
     case "connecting":
       return { startCall: disabled("Connecting…", "Connecting…"), endCall: enabled(), typeInstead: disabled(CONNECTING_REASON), statusLine: "Connecting…" };
     case "listening":

@@ -74,6 +74,14 @@ interface RecordedTurn {
   assistant_response: string;
 }
 
+interface CallAttempt {
+  id: number;
+  cancelled: boolean;
+  connected: boolean;
+  cancellationSent: boolean;
+  conversation: { id: string; token: string } | null;
+}
+
 /**
  * `greeting` replaces the assistant's default first line for this call
  * ("Hi Amara, thanks for calling...") via Vapi's per-call firstMessage
@@ -103,7 +111,21 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
   const volumeListenersRef = useRef(new Set<(volume: number) => void>());
   const liveLineCountRef = useRef(0);
   const recordedTurnCountRef = useRef(0);
+  const attemptCounterRef = useRef(0);
+  const activeAttemptRef = useRef<CallAttempt | null>(null);
+  const mountedRef = useRef(true);
   const greeting = options.greeting;
+
+  const cancelAttempt = useCallback((attempt: CallAttempt, keepalive = false) => {
+    if (!attempt.conversation || attempt.cancellationSent) return;
+    attempt.cancellationSent = true;
+    const { id, token } = attempt.conversation;
+    void fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/conversations/${id}/cancel`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      keepalive,
+    }).catch(() => undefined);
+  }, []);
 
   const syncRecordedTurns = useCallback(async () => {
     const conversation = conversationRef.current;
@@ -137,6 +159,12 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
       const stub = (globalThis as { __VAPI_STUB__?: Vapi }).__VAPI_STUB__;
       const vapi = stub ?? new Vapi(process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY!);
       vapi.on("call-start", () => {
+        const attempt = activeAttemptRef.current;
+        if (!attempt || attempt.cancelled) {
+          vapi.stop();
+          return;
+        }
+        attempt.connected = true;
         callStartedAtRef.current = Date.now();
         lastActivityAtRef.current = Date.now();
         setCallState("listening");
@@ -166,12 +194,13 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
             .catch(() => undefined);
         }
         setPartial(null);
-        setCallState((s) => (s === "ending" ? "ended" : "dropped"));
+        setCallState((s) => (activeAttemptRef.current?.cancelled || s === "ending" ? "ended" : "dropped"));
       });
       vapi.on("volume-level", (volume: number) => {
         for (const listener of volumeListenersRef.current) listener(volume);
       });
       vapi.on("error", (error: unknown) => {
+        if (activeAttemptRef.current?.cancelled) return;
         const message = error instanceof Error ? error.message : String(error);
         if (/permission|microphone|NotAllowedError/i.test(message)) {
           setCallState("mic_blocked");
@@ -198,6 +227,20 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
   }, [syncRecordedTurns]);
 
   const startCall = useCallback(async () => {
+    const previous = activeAttemptRef.current;
+    if (previous) {
+      previous.cancelled = true;
+      cancelAttempt(previous);
+    }
+    const attempt: CallAttempt = {
+      id: ++attemptCounterRef.current,
+      cancelled: false,
+      connected: false,
+      cancellationSent: false,
+      conversation: null,
+    };
+    activeAttemptRef.current = attempt;
+    conversationRef.current = null;
     setCallState("requesting");
     setLiveLines([]);
     setRecorded([]);
@@ -218,38 +261,53 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
         body: JSON.stringify({ channel: "web_voice", access_token: accessToken }),
       });
     } catch {
-      setCallState("unavailable");
+      if (mountedRef.current && activeAttemptRef.current === attempt && !attempt.cancelled) setCallState("unavailable");
       return;
     }
 
     if (res.status === 429) {
-      setCallState("limit_reached");
+      if (mountedRef.current && activeAttemptRef.current === attempt && !attempt.cancelled) setCallState("limit_reached");
       return;
     }
     if (res.status === 503) {
-      setCallState("busy");
+      if (mountedRef.current && activeAttemptRef.current === attempt && !attempt.cancelled) setCallState("busy");
       return;
     }
     if (!res.ok) {
-      setCallState("unavailable");
+      if (mountedRef.current && activeAttemptRef.current === attempt && !attempt.cancelled) setCallState("unavailable");
       return;
     }
 
     const { conversation_id, token } = (await res.json()) as { conversation_id: string; token: string };
-    conversationRef.current = { id: conversation_id, token };
+    attempt.conversation = { id: conversation_id, token };
+    if (attempt.cancelled || activeAttemptRef.current !== attempt || !mountedRef.current) {
+      cancelAttempt(attempt, !mountedRef.current);
+      if (mountedRef.current && activeAttemptRef.current === attempt) setCallState("ended");
+      return;
+    }
+    conversationRef.current = attempt.conversation;
 
     setCallState("connecting");
     try {
       await getVapi().start(process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID!, { metadata: { conversation_id, token }, ...(greeting ? { firstMessage: greeting } : {}) });
+      if (attempt.cancelled || activeAttemptRef.current !== attempt || !mountedRef.current) {
+        getVapi().stop();
+        cancelAttempt(attempt, !mountedRef.current);
+      }
     } catch {
-      setCallState("unavailable");
+      if (mountedRef.current && activeAttemptRef.current === attempt && !attempt.cancelled) setCallState("unavailable");
     }
-  }, [getVapi, accessToken, greeting]);
+  }, [getVapi, accessToken, greeting, cancelAttempt]);
 
   const endCall = useCallback(() => {
-    setCallState("ending");
+    const attempt = activeAttemptRef.current;
+    if (attempt) {
+      attempt.cancelled = true;
+      if (!attempt.connected) cancelAttempt(attempt);
+    }
+    setCallState(attempt?.connected ? "ending" : "ended");
     vapiRef.current?.stop();
-  }, []);
+  }, [cancelAttempt]);
 
   // The visible 5-minute countdown (matches maxDurationSeconds, which Vapi
   // enforces itself - this is purely the display) and the 30-second
@@ -285,10 +343,19 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
   }, [callState]);
 
   useEffect(
-    () => () => {
-      vapiRef.current?.stop();
+    () => {
+      mountedRef.current = true;
+      return () => {
+        mountedRef.current = false;
+        const attempt = activeAttemptRef.current;
+        if (attempt) {
+          attempt.cancelled = true;
+          cancelAttempt(attempt, true);
+        }
+        vapiRef.current?.stop();
+      };
     },
-    [],
+    [cancelAttempt],
   );
 
   const subscribeToVolume = useCallback((listener: (volume: number) => void) => {

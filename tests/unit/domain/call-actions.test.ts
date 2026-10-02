@@ -11,10 +11,10 @@ describe("deriveCallActions", () => {
     expect(a.statusLine).toBe("Talk to RelayPay support");
   });
 
-  it("requesting: start disabled 'Connecting…', end hidden, type instead disabled", () => {
+  it("requesting: start disabled, end enabled so an immediate hang-up can cancel, type instead disabled", () => {
     const a = deriveCallActions("requesting");
     expect(a.startCall).toMatchObject({ kind: "disabled" });
-    expect(a.endCall).toEqual({ kind: "hidden" });
+    expect(a.endCall).toEqual({ kind: "enabled" });
     expect(a.typeInstead.kind).toBe("disabled");
   });
 

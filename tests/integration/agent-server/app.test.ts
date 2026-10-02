@@ -221,6 +221,39 @@ describe("POST /api/conversations", () => {
   );
 });
 
+describe("POST /api/conversations/:id/cancel", () => {
+  it("idempotently abandons a pre-connect call and ignores a later Vapi error report", async () => {
+    const { body } = await createConversation(await newCallerToken());
+    const conversationId = body.conversation_id as string;
+    const token = body.token as string;
+    const cancel = () => fetch(`${baseUrl}/api/conversations/${conversationId}/cancel`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect((await cancel()).status).toBe(200);
+    expect(await (await cancel()).json()).toEqual({ ended: true });
+    const { data: cancelled } = await supabase.from("conversations").select("ended_at, ended_reason, final_status, summary").eq("id", conversationId).single();
+    expect(cancelled).toMatchObject({ ended_reason: "cancelled_before_connect", final_status: "abandoned", summary: null });
+    expect(cancelled?.ended_at).toBeTruthy();
+
+    const report = { message: { type: "end-of-call-report", endedReason: "call.in-progress.error-assistant-did-not-receive-customer-audio", call: { id: "late-vapi-call", metadata: { conversation_id: conversationId } } } };
+    expect((await fetch(`${baseUrl}/vapi/events`, { method: "POST", headers: { "Content-Type": "application/json", "x-vapi-server-secret": VAPI_SERVER_SECRET }, body: JSON.stringify(report) })).status).toBe(200);
+    const { data: afterReport } = await supabase.from("conversations").select("ended_at, ended_reason, final_status").eq("id", conversationId).single();
+    expect(afterReport).toMatchObject({ ended_at: cancelled?.ended_at, ended_reason: "cancelled_before_connect", final_status: "abandoned" });
+  }, 20_000);
+
+  it("rejects a token for another conversation", async () => {
+    const a = await createConversation(await newCallerToken());
+    const b = await createConversation(await newCallerToken());
+    const res = await fetch(`${baseUrl}/api/conversations/${a.body.conversation_id}/cancel`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${b.body.token}` },
+    });
+    expect(res.status).toBe(401);
+  }, 20_000);
+});
+
 describe("GET /api/conversations/:id/outcome", () => {
   it("reports the escalation this conversation created, with its reference and callback time", async () => {
     const { body } = await createConversation(await newCallerToken(), "web_text");
