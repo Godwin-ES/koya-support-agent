@@ -50,12 +50,19 @@ interface ManagedSession {
   pool: Pool;
 }
 
+interface PreparingSession {
+  promise: Promise<Session>;
+  pool: Pool;
+  cancelled: boolean;
+}
+
 const DEFAULT_MAX_CONCURRENT = 3;
 const DEFAULT_MAX_CONCURRENT_TEXT = 4;
 const DEFAULT_IDLE_MS = 2 * 60_000;
 
 export class SessionManager {
   private readonly sessions = new Map<string, ManagedSession>();
+  private readonly preparing = new Map<string, PreparingSession>();
   private readonly limits: Record<Pool, number>;
   private readonly idleMs: number;
   private sweepHandle: ReturnType<typeof setInterval> | null = null;
@@ -82,12 +89,13 @@ export class SessionManager {
   }
 
   get size(): number {
-    return this.sessions.size;
+    return this.sessions.size + this.preparing.size;
   }
 
   sizeOf(pool: Pool): number {
     let count = 0;
     for (const managed of this.sessions.values()) if (managed.pool === pool) count++;
+    for (const pending of this.preparing.values()) if (pending.pool === pool) count++;
     return count;
   }
 
@@ -100,11 +108,11 @@ export class SessionManager {
   }
 
   has(conversationId: string): boolean {
-    return this.sessions.has(conversationId);
+    return this.sessions.has(conversationId) || this.preparing.has(conversationId);
   }
 
-  /** Starts a session at conversation start (before the caller's first turn), so its startup overlaps the greeting - or returns the existing one. */
-  async getOrCreate(conversationId: string, channel: Channel = "web_voice"): Promise<Session> {
+  /** Starts one shared preparation. Callers arriving during it join the same promise. */
+  prepare(conversationId: string, channel: Channel = "web_voice", seed: { priorTurns?: PriorTurn[] } = {}): Promise<Session> {
     const pool = poolFor(channel);
     const existing = this.sessions.get(conversationId);
     if (existing) {
@@ -116,30 +124,52 @@ export class SessionManager {
       // for a genuinely lost worker.
       if (!existing.session.closed) {
         existing.lastActivity = Date.now();
-        return existing.session;
+        return Promise.resolve(existing.session);
       }
       this.sessions.delete(conversationId);
     }
+    const inFlight = this.preparing.get(conversationId);
+    if (inFlight) return inFlight.promise;
     if (this.isFull(pool)) throw new SessionCapacityError(this.limits[pool], pool);
 
-    const [priorTurns, customer] = await Promise.all([this.fetchPriorTurns(conversationId), this.fetchBoundCustomer(conversationId)]);
-    const handoverNote = callerContextNote(customer) + (priorTurns.length > 0 ? buildHandoverNote(priorTurns) : "");
+    const reservation = { promise: null as unknown as Promise<Session>, pool, cancelled: false };
+    reservation.promise = (async () => {
+      try {
+        const [priorTurns, customer] = await Promise.all([
+          seed.priorTurns !== undefined ? Promise.resolve(seed.priorTurns) : this.fetchPriorTurns(conversationId),
+          this.fetchBoundCustomer(conversationId),
+        ]);
+        const handoverNote = callerContextNote(customer) + (priorTurns.length > 0 ? buildHandoverNote(priorTurns) : "");
+        const sessionOptions: SessionOptions = {
+          conversationId,
+          model: this.options.model,
+          effort: this.options.effort,
+          mcpServerUrl: this.options.mcpServerUrl,
+          mcpServerToken: this.options.mcpServerToken,
+          supabase: this.options.supabase,
+          channel,
+          handoverNote,
+          queryFactory: this.options.queryFactory,
+          writeBuffer: this.writeBuffer,
+        };
+        const session = (this.options.sessionFactory ?? ((o) => new Session(o)))(sessionOptions);
+        if (reservation.cancelled || this.preparing.get(conversationId) !== reservation) {
+          session.close();
+          return session;
+        }
+        this.sessions.set(conversationId, { session, lastActivity: Date.now(), pool });
+        return session;
+      } finally {
+        if (this.preparing.get(conversationId) === reservation) this.preparing.delete(conversationId);
+      }
+    })();
+    this.preparing.set(conversationId, reservation);
+    return reservation.promise;
+  }
 
-    const sessionOptions: SessionOptions = {
-      conversationId,
-      model: this.options.model,
-      effort: this.options.effort,
-      mcpServerUrl: this.options.mcpServerUrl,
-      mcpServerToken: this.options.mcpServerToken,
-      supabase: this.options.supabase,
-      channel,
-      handoverNote,
-      queryFactory: this.options.queryFactory,
-      writeBuffer: this.writeBuffer,
-    };
-    const session = (this.options.sessionFactory ?? ((o) => new Session(o)))(sessionOptions);
-    this.sessions.set(conversationId, { session, lastActivity: Date.now(), pool });
-    return session;
+  /** Returns a ready session or joins its single in-flight preparation. */
+  async getOrCreate(conversationId: string, channel: Channel = "web_voice"): Promise<Session> {
+    return await this.prepare(conversationId, channel);
   }
 
   touch(conversationId: string): void {
@@ -148,6 +178,11 @@ export class SessionManager {
   }
 
   close(conversationId: string): void {
+    const pending = this.preparing.get(conversationId);
+    if (pending) {
+      pending.cancelled = true;
+      this.preparing.delete(conversationId);
+    }
     const managed = this.sessions.get(conversationId);
     if (!managed) return;
     managed.session.close();

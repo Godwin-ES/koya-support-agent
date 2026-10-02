@@ -184,9 +184,12 @@ export function createApp(deps: AppDeps) {
       if (error) throw error;
       const conversationId = data.id as string;
 
-      // Started here, not on the first turn, so its multi-second startup
-      // overlaps the greeting (SYSTEM-DESIGN.md §3 step 2).
-      await sessionManager.getOrCreate(conversationId, channel);
+      // Reserve immediately, but return the call token without waiting for
+      // database hydration. Preparation now overlaps Vapi's connection and
+      // greeting; the first real turn joins the same single-flight promise.
+      void sessionManager.prepare(conversationId, channel, { priorTurns: [] }).catch((prepareError) => {
+        console.error(`preparing session ${conversationId} failed:`, prepareError);
+      });
 
       const token = issueConversationToken(deps.conversationTokenSecret, conversationId);
       res.json({ conversation_id: conversationId, token });

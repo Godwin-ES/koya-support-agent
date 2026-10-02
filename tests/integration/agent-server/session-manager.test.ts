@@ -11,7 +11,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Query, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { serviceRoleClient } from "../helpers/db";
 import { SessionManager, SessionCapacityError } from "../../../agent-server/src/session-manager";
-import type { SessionOptions } from "../../../agent-server/src/session";
+import { Session, type SessionOptions } from "../../../agent-server/src/session";
 
 const supabase: SupabaseClient = serviceRoleClient();
 const conversationIds: string[] = [];
@@ -123,6 +123,70 @@ describe("text after a tool call", () => {
 });
 
 describe("SessionManager", () => {
+  it("single-flights prepare and getOrCreate for the same conversation", async () => {
+    const id = await newConversation();
+    let constructions = 0;
+    const manager = new SessionManager({
+      supabase,
+      mcpServerUrl: "http://127.0.0.1:8090/mcp",
+      mcpServerToken: "test-token",
+      model: "claude-haiku-4-5",
+      sessionFactory: (options) => { constructions++; return new Session(options); },
+    });
+    const [prepared, joined] = await Promise.all([
+      manager.prepare(id, "web_voice", { priorTurns: [] }),
+      manager.getOrCreate(id, "web_voice"),
+    ]);
+    expect(prepared).toBe(joined);
+    expect(constructions).toBe(1);
+  });
+
+  it("counts preparation as capacity, releases failed preparation, and cannot be revived after close", async () => {
+    const firstId = await newConversation();
+    const secondId = await newConversation();
+    let shouldFail = true;
+    const manager = new SessionManager({
+      supabase,
+      mcpServerUrl: "http://127.0.0.1:8090/mcp",
+      mcpServerToken: "test-token",
+      model: "claude-haiku-4-5",
+      maxConcurrent: 1,
+      sessionFactory: (options) => {
+        if (shouldFail) throw new Error("construction failed");
+        return new Session(options);
+      },
+    });
+
+    const failed = manager.prepare(firstId, "web_voice", { priorTurns: [] });
+    expect(manager.sizeOf("voice")).toBe(1);
+    await expect(failed).rejects.toThrow("construction failed");
+    expect(manager.sizeOf("voice")).toBe(0);
+
+    shouldFail = false;
+    const pending = manager.prepare(secondId, "web_voice", { priorTurns: [] });
+    expect(manager.isFull("voice")).toBe(true);
+    manager.close(secondId);
+    const late = await pending;
+    expect(late.closed).toBe(true);
+    expect(manager.has(secondId)).toBe(false);
+    expect(manager.sizeOf("voice")).toBe(0);
+  });
+
+  it("uses seeded empty prior turns instead of rebuilding a handover from the database", async () => {
+    const id = await newConversation();
+    await supabase.from("conversation_turns").insert({ conversation_id: id, seq: 1, user_transcript: "Old question", assistant_response: "Old answer", answer_type: "answer" });
+    let handover = "not captured";
+    const manager = new SessionManager({
+      supabase,
+      mcpServerUrl: "http://127.0.0.1:8090/mcp",
+      mcpServerToken: "test-token",
+      model: "claude-haiku-4-5",
+      sessionFactory: (options) => { handover = options.handoverNote ?? ""; return new Session(options); },
+    });
+    await manager.prepare(id, "web_voice", { priorTurns: [] });
+    expect(handover).not.toContain("Old question");
+  });
+
   it("keeps voice and chat in separate pools - a full set of calls doesn't block a chat", async () => {
     const manager = new SessionManager({ supabase, mcpServerUrl: "http://127.0.0.1:8090/mcp", mcpServerToken: "test-token", model: "claude-haiku-4-5", maxConcurrent: 1, maxConcurrentText: 1, queryFactory: scriptedQueryFactory([resultMessage()]) });
     await manager.getOrCreate(await newConversation(), "web_voice");
