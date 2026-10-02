@@ -3,6 +3,13 @@ import type { HistoryItem, HistoryOutcome } from "@/lib/server/history";
 import { formatMmSs } from "@/components/voice/call-status";
 import { cn } from "@/lib/utils";
 
+export function partitionHistoryItems(items: HistoryItem[]): { calls: HistoryItem[]; chats: HistoryItem[] } {
+  return {
+    calls: items.filter(({ channel }) => channel !== "web_text"),
+    chats: items.filter(({ channel }) => channel === "web_text"),
+  };
+}
+
 export function ChannelIcon({ channel, className }: { channel: HistoryItem["channel"]; className?: string }) {
   const Icon = channel === "web_text" ? MessageSquareText : Phone;
   return (

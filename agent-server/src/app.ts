@@ -540,10 +540,21 @@ async function streamTurn(deps: AppDeps, ops: OpsNotifier, res: Response, args: 
   });
 
   try {
-    const seq = await currentTurnSeq({ supabase: deps.supabase, conversationId: args.conversationId });
-    const recordedCount = seq - 1;
+    const { data: lastTurn, count: recordedCount, error: turnStateError } = await deps.supabase
+      .from("conversation_turns")
+      .select("user_transcript, assistant_response, interrupted", { count: "exact" })
+      .eq("conversation_id", args.conversationId)
+      .order("seq", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (turnStateError) throw turnStateError;
 
-    const newMessage = args.forceNew ? (args.userMessages.at(-1) ?? null) : newUserMessage(args.userMessages, recordedCount);
+    const newMessage = args.forceNew ? (args.userMessages.at(-1) ?? null) : newUserMessage(args.userMessages, {
+      count: recordedCount ?? 0,
+      lastUserMessage: lastTurn?.user_transcript,
+      lastAssistantResponse: lastTurn?.assistant_response,
+      lastInterrupted: lastTurn?.interrupted,
+    });
 
     if (newMessage === null) {
       // A resend of a state we've already answered - idempotent replay, no new Claude call (SYSTEM-DESIGN.md §10).

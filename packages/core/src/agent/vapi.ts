@@ -45,10 +45,29 @@ export function parseChatCompletionsBody(body: unknown): ParsedChatCompletionsRe
   return { conversationId, token, model: metadata?.model ?? b.model, effort: metadata?.effort, userMessages };
 }
 
-/** Which user message (if any) is new, given how many turns are already recorded - "stays idempotent for a repeated turn" (Task 7). */
-export function newUserMessage(userMessages: string[], recordedTurnCount: number): string | null {
-  if (userMessages.length <= recordedTurnCount) return null; // a resend of a state we've already answered
-  return userMessages[userMessages.length - 1]!;
+export interface RecordedTurnState {
+  count: number;
+  lastUserMessage?: string | null;
+  lastAssistantResponse?: string | null;
+  lastInterrupted?: boolean;
+}
+
+/**
+ * Which user message (if any) is new. Vapi can first submit a short phrase,
+ * cancel it when the caller continues after a pause, then replace that same
+ * transcript slot with the complete utterance. An interrupted turn with no
+ * reply is therefore provisional, not an answered duplicate.
+ */
+export function newUserMessage(userMessages: string[], recorded: RecordedTurnState): string | null {
+  if (userMessages.length < recorded.count) return null;
+  const latest = userMessages.at(-1) ?? null;
+  if (userMessages.length === recorded.count) {
+    const revisedProvisionalTurn = recorded.lastInterrupted === true
+      && !recorded.lastAssistantResponse?.trim()
+      && latest?.trim() !== recorded.lastUserMessage?.trim();
+    return revisedProvisionalTurn ? latest : null;
+  }
+  return latest;
 }
 
 export function formatChatCompletionChunk(text: string, opts: { id: string; model: string }): string {

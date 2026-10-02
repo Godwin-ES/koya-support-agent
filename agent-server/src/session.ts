@@ -250,20 +250,26 @@ export class Session {
           const decision = decideTurn({ toolCalls: recorded, declared });
           const ttft_ms = firstTokenAt !== null ? Math.round(firstTokenAt - startedAt) : null;
           const total_ms = Math.round(performance.now() - startedAt);
-          await this.writeBuffer.writeOrBuffer("conversation_turns", {
-            conversation_id: this.conversationId,
-            seq,
-            user_transcript: userText,
-            assistant_response: summarize(stripDecisionTags(assistantResponse), 4000),
-            answer_type: decision.answer_type,
-            answer_type_inferred: decision.inferred,
-            confidence: decision.confidence,
-            confidence_note: decision.confidence_note,
-            interrupted: true,
-            ttft_ms,
-            total_ms,
-            cost_usd: 0,
-          });
+          // Vapi may endpoint on a short pause, cancel this request when the
+          // caller continues, then resend the completed utterance in the same
+          // transcript slot. Persisting a zero-output fragment makes that
+          // finalized request look like a duplicate and yields silence.
+          if (assistantResponse.trim() || recorded.length > 0) {
+            await this.writeBuffer.writeOrBuffer("conversation_turns", {
+              conversation_id: this.conversationId,
+              seq,
+              user_transcript: userText,
+              assistant_response: summarize(stripDecisionTags(assistantResponse), 4000),
+              answer_type: decision.answer_type,
+              answer_type_inferred: decision.inferred,
+              confidence: decision.confidence,
+              confidence_note: decision.confidence_note,
+              interrupted: true,
+              ttft_ms,
+              total_ms,
+              cost_usd: 0,
+            });
+          }
           yield { kind: "done", seq, answer_type: decision.answer_type, confidence: decision.confidence, interrupted: true, ttft_ms, total_ms, cost_usd: 0 };
           return;
         }

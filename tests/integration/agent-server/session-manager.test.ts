@@ -290,6 +290,25 @@ describe("SessionManager", () => {
     expect(events.at(-1)).toMatchObject({ kind: "done", interrupted: true });
   });
 
+  it("does not record a provisional utterance cancelled before any reply was emitted", async () => {
+    const conversationId = await newConversation();
+    const manager = new SessionManager({
+      supabase,
+      mcpServerUrl: "http://127.0.0.1:8090/mcp",
+      mcpServerToken: "test-token",
+      model: "claude-haiku-4-5",
+      queryFactory: scriptedQueryFactory([textDelta("This must not be spoken"), resultMessage()]),
+    });
+
+    const session = await manager.getOrCreate(conversationId);
+    const events = [];
+    for await (const event of session.runTurn("Yes.", { interrupted: () => true })) events.push(event);
+
+    const { count } = await supabase.from("conversation_turns").select("*", { count: "exact", head: true }).eq("conversation_id", conversationId);
+    expect(count).toBe(0);
+    expect(events.at(-1)).toMatchObject({ kind: "done", interrupted: true });
+  });
+
   it("the turn after an interruption gets its own reply, not the interrupted turn's leftover error result (a real call's \"I'm having trouble\")", async () => {
     const conversationId = await newConversation();
     // What the SDK really emits: the interrupted turn keeps streaming a little,

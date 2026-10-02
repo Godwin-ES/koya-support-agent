@@ -57,15 +57,33 @@ describe("parseChatCompletionsBody", () => {
 
 describe("newUserMessage", () => {
   it("returns null when this request has no more user messages than are already recorded (a resend)", () => {
-    expect(newUserMessage(["first"], 1)).toBeNull();
+    expect(newUserMessage(["first"], { count: 1, lastUserMessage: "first", lastAssistantResponse: "answer", lastInterrupted: false })).toBeNull();
   });
 
   it("returns the newest user message when there's exactly one more than recorded", () => {
-    expect(newUserMessage(["first", "second"], 1)).toBe("second");
+    expect(newUserMessage(["first", "second"], { count: 1, lastUserMessage: "first", lastAssistantResponse: "answer", lastInterrupted: false })).toBe("second");
   });
 
   it("returns the newest message when nothing is recorded yet", () => {
-    expect(newUserMessage(["first"], 0)).toBe("first");
+    expect(newUserMessage(["first"], { count: 0 })).toBe("first");
+  });
+
+  it("accepts Vapi's finalized replacement when an empty interrupted utterance occupied the same transcript slot", () => {
+    expect(newUserMessage(["Payout 7001", "Yes. Payout 7001."], {
+      count: 2,
+      lastUserMessage: "Yes.",
+      lastAssistantResponse: "",
+      lastInterrupted: true,
+    })).toBe("Yes. Payout 7001.");
+  });
+
+  it("does not regenerate an answered turn merely because Vapi later changes its transcript text", () => {
+    expect(newUserMessage(["Payout 7001"], {
+      count: 1,
+      lastUserMessage: "Payout seven zero zero one",
+      lastAssistantResponse: "I couldn't find it.",
+      lastInterrupted: false,
+    })).toBeNull();
   });
 });
 
