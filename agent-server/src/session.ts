@@ -29,11 +29,18 @@ const TOOL_NAMES = ["search_knowledge", "lookup_customer", "lookup_transaction",
 // turn, and never saved into the recorded reply - it's there to fill
 // silence, not part of the answer. Generic on purpose ("let me check"
 // would be wrong on a turn with no lookup).
-// 2.5s, not the original 0.9s: the agent now opens with its own words (it no
-// longer has to log a decision before speaking), so this is a rare fallback
-// for a slow turn rather than something said every time - a generic filler
-// followed straight away by the real answer sounded crammed together.
-const HOLDING_DELAY_MS = 2_500;
+// Back to 900ms (was briefly raised to 2.5s): real production calls showed
+// time to first word still regularly running 2.5-5s, especially on any turn
+// that calls search_knowledge or a lookup before saying anything - so a
+// 2.5s delay meant the caller heard dead air for the full 2.5s on most
+// turns, not just a rare slow one, which read as the agent being
+// unresponsive. The 2.5s change was meant to stop a filler running straight
+// into the real answer with no gap - that's now handled at its actual
+// source instead: every holding phrase already ends with its own ". " (a
+// real sentence break, not a bare word), and the text-block-start handling
+// below inserts a space whenever a reply resumes after a tool call, so the
+// two no longer run together regardless of how soon the real reply starts.
+const HOLDING_DELAY_MS = 900;
 export const HOLDING_PHRASES = ["Okay, one moment. ", "Sure, let's see. ", "Right, just a second. ", "Mm, give me a moment. "] as const;
 
 export type TurnDeltaEvent = { kind: "delta"; text: string };

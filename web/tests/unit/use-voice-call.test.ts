@@ -122,6 +122,43 @@ describe("useVoiceCall - the transcript", () => {
     delete (globalThis as { __VAPI_STUB__?: StubVapi }).__VAPI_STUB__;
   });
 
+  it("doesn't duplicate a live caption line that arrives while the sync request is still in flight", async () => {
+    let resolveFetch!: (value: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      if (String(url).endsWith("/turns")) return new Promise<Response>((resolve) => (resolveFetch = resolve));
+      return new Response(JSON.stringify({ conversation_id: "c1", token: "t1" }), { status: 200 });
+    });
+    const { result } = renderHook(() => useVoiceCall("test-access-token"));
+    await act(async () => {
+      await result.current.startCall();
+    });
+    act(() => {
+      stub.emit("call-start");
+      stub.emit("message", line("user", "What are your fees?"));
+      stub.emit("speech-start");
+      stub.emit("message", line("assistant", "Fees depend on the corridor."));
+      stub.emit("speech-end"); // kicks off the sync after 700ms
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(700);
+    });
+    // The tail of the same reply arrives while the /turns request above is
+    // still pending - this is the line a mark taken before the fetch would miss.
+    act(() => stub.emit("message", line("assistant", " It's shown before you confirm.")));
+    await act(async () => {
+      resolveFetch(
+        new Response(JSON.stringify({ turns: [{ seq: 1, user_transcript: "What are your fees?", assistant_response: "Fees depend on the corridor. It's shown before you confirm." }] }), { status: 200 }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(result.current.fullTranscript).toEqual([
+      { role: "assistant", text: "Thanks for calling RelayPay support. How can I help you today?" },
+      { role: "user", text: "What are your fees?" },
+      { role: "assistant", text: "Fees depend on the corridor. It's shown before you confirm." },
+    ]);
+  });
+
   it("replaces Vapi's fragmented lines with the recorded turn once the agent finishes speaking, keeping the greeting", async () => {
     const greeting = "Hi Amara, thanks for calling RelayPay support. How can I help you today?";
     const { result } = renderHook(() => useVoiceCall("test-access-token", { greeting }));

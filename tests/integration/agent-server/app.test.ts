@@ -55,6 +55,20 @@ function scriptedQueryFactory(script: SDKMessage[]): NonNullable<SessionOptions[
   };
 }
 
+/** Like scriptedQueryFactory, but the first message arrives only after `delayMs` - long enough to overlap a second request for the same conversation. */
+function slowFirstReplyFactory(script: SDKMessage[], delayMs: number): NonNullable<SessionOptions["queryFactory"]> {
+  return () => {
+    let index = 0;
+    return {
+      next: async () => {
+        if (index === 0) await new Promise((r) => setTimeout(r, delayMs));
+        return index >= script.length ? { done: true as const, value: undefined } : { done: false as const, value: script[index++] };
+      },
+      interrupt: async () => {},
+    } as unknown as Query;
+  };
+}
+
 let server: Server;
 let baseUrl: string;
 let sessionManager: SessionManager;
@@ -279,6 +293,55 @@ describe("POST /vapi/chat/completions", () => {
 
       const { data: turn } = await supabase.from("conversation_turns").select("assistant_response").eq("conversation_id", body.conversation_id).single();
       expect(turn?.assistant_response).toBe("Fees depend on the corridor.");
+    },
+    20_000,
+  );
+
+  it(
+    "refuses a second request for the same conversation while the first is still generating - a slow turn getting retried by the caller must not produce two replies",
+    async () => {
+      // Its own server: the shared one above resolves instantly, leaving no
+      // window for a genuinely overlapping second request.
+      const slowManager = new SessionManager({
+        supabase,
+        mcpServerUrl: "http://127.0.0.1:8090/mcp",
+        mcpServerToken: "unused-in-these-tests",
+        model: MODEL,
+        maxConcurrent: 3,
+        queryFactory: slowFirstReplyFactory([textDelta("Fees depend on the corridor."), resultMessage()], 1_000),
+      });
+      const slowApp = createApp({ supabase, sessionManager: slowManager, conversationTokenSecret: CONVERSATION_TOKEN_SECRET, vapiServerSecret: VAPI_SERVER_SECRET, model: MODEL, maxConcurrentSessions: 3 });
+      const slowServer = slowApp.listen(0);
+      await new Promise((resolve) => slowServer.once("listening", resolve));
+      const slowBaseUrl = `http://127.0.0.1:${(slowServer.address() as AddressInfo).port}`;
+      try {
+        const accessToken = await newCallerToken();
+        const created = await fetch(`${slowBaseUrl}/api/conversations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ access_token: accessToken, channel: "web_voice" }) });
+        const { conversation_id, token } = (await created.json()) as { conversation_id: string; token: string };
+        conversationIds.push(conversation_id);
+
+        const send = () =>
+          fetch(`${slowBaseUrl}/vapi/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-vapi-server-secret": VAPI_SERVER_SECRET },
+            body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: "What are your fees?" }], metadata: { conversation_id, token } }),
+          });
+
+        const first = send();
+        await new Promise((r) => setTimeout(r, 100)); // lets the first request's handler register itself before the retry
+        const second = await send();
+        expect(second.status).toBe(409);
+        expect(await second.json()).toEqual({ error: "reply_in_progress" });
+
+        const firstRes = await first;
+        expect(firstRes.status).toBe(200);
+        await firstRes.text();
+
+        const { count } = await supabase.from("conversation_turns").select("id", { count: "exact", head: true }).eq("conversation_id", conversation_id);
+        expect(count).toBe(1);
+      } finally {
+        slowServer.close();
+      }
     },
     20_000,
   );

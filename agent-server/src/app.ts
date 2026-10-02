@@ -296,10 +296,27 @@ export function createApp(deps: AppDeps) {
       return;
     }
 
-    // Always this process's own model - the one ANTHROPIC_MODEL sets for
-    // voice and chat alike. The model name Vapi's assistant config sends
-    // is ignored, so the two can never silently disagree.
-    await streamTurn(deps, ops, res, { conversationId: parsed.conversationId, userMessages: parsed.userMessages, model: deps.model, format: "openai", channel: "web_voice" });
+    // Guards against a second generation for the same still-in-flight turn
+    // (e.g. Vapi retrying a slow request): without this, both would run -
+    // serialized by the session's own turn lock, but back to back as two
+    // separate replies, which can read as one reply repeating itself.
+    // `/api/text` has had this same guard from the start; this channel
+    // hadn't needed it until real voice traffic showed turns slow enough
+    // to plausibly trigger a client-side retry.
+    if (repliesInFlight.has(parsed.conversationId)) {
+      res.status(409).json({ error: "reply_in_progress" });
+      return;
+    }
+
+    repliesInFlight.add(parsed.conversationId);
+    try {
+      // Always this process's own model - the one ANTHROPIC_MODEL sets for
+      // voice and chat alike. The model name Vapi's assistant config sends
+      // is ignored, so the two can never silently disagree.
+      await streamTurn(deps, ops, res, { conversationId: parsed.conversationId, userMessages: parsed.userMessages, model: deps.model, format: "openai", channel: "web_voice" });
+    } finally {
+      repliesInFlight.delete(parsed.conversationId);
+    }
   });
 
   // -- POST /api/text ----------------------------------------------------------

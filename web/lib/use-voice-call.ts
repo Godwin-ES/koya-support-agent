@@ -108,7 +108,6 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
   const syncRecordedTurns = useCallback(async () => {
     const conversation = conversationRef.current;
     if (!conversation) return;
-    const mark = liveLineCountRef.current;
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_AGENT_SERVER_URL}/api/conversations/${conversation.id}/turns`, { headers: { Authorization: `Bearer ${conversation.token}` } });
       if (!res.ok) return;
@@ -116,7 +115,13 @@ export function useVoiceCall(accessToken: string, options: { greeting?: string }
       if (!Array.isArray(body.turns) || body.turns.length <= recordedTurnCountRef.current) return;
       recordedTurnCountRef.current = body.turns.length;
       setRecorded(body.turns.flatMap((t) => [{ role: "user" as const, text: t.user_transcript }, ...(t.assistant_response ? [{ role: "assistant" as const, text: t.assistant_response }] : [])]));
-      setLinesSuperseded(mark);
+      // Read *after* the fetch resolves, not before it starts: Vapi's own
+      // live caption lines for this same reply keep arriving while the
+      // request is in flight (a real call showed the tail of a reply
+      // duplicated this way - the recorded text came back clean, but a mark
+      // taken before the await left those in-flight lines stranded
+      // alongside it). Taking the count now covers them too.
+      setLinesSuperseded(liveLineCountRef.current);
     } catch {
       // Live lines stay on screen; the next sync tries again.
     }
