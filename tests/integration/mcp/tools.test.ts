@@ -38,6 +38,30 @@ async function signInAs(customerId: string | null): Promise<void> {
   await supabase.from("conversations").update({ verified_customer_id: customerId }).eq("id", context.conversationId);
 }
 
+async function advanceTurn(): Promise<void> {
+  const { count } = await supabase.from("conversation_turns").select("*", { count: "exact", head: true }).eq("conversation_id", context.conversationId);
+  const { error } = await supabase.from("conversation_turns").insert({
+    conversation_id: context.conversationId,
+    seq: (count ?? 0) + 1,
+    user_transcript: "Yes, please go ahead.",
+    assistant_response: "Confirmed.",
+    answer_type: "clarify",
+  });
+  if (error) throw error;
+}
+
+async function confirmTicket(input: Parameters<typeof createSupportTicket>[1]) {
+  const proposal = await createSupportTicket(context, input) as { confirmation_key: string };
+  await advanceTurn();
+  return createSupportTicket(context, { ...input, confirmed: true, confirmation_key: proposal.confirmation_key });
+}
+
+async function confirmEscalation(input: Parameters<typeof createEscalation>[1]) {
+  const proposal = await createEscalation(context, input) as { confirmation_key: string };
+  await advanceTurn();
+  return createEscalation(context, { ...input, confirmed: true, confirmation_key: proposal.confirmation_key });
+}
+
 describe("account binding - a caller only ever sees their own records", () => {
   it("lookup_customer returns the signed-in customer, with no identifiers needed", async () => {
     await signInAs("CUS-1001");
@@ -109,8 +133,8 @@ describe("account binding - a caller only ever sees their own records", () => {
 
   it("tickets and escalations are filed against the signed-in customer, whatever customer_id the model passes, and use the account's name and email", async () => {
     await signInAs("CUS-1001");
-    await createSupportTicket(context, { customer_id: "CUS-1003", category: "payment", priority: "high", summary: "s" });
-    const escalation = await createEscalation(context, { customer_id: "CUS-1003", category: "account", reason: "r" });
+    await confirmTicket({ customer_id: "CUS-1003", category: "payment", priority: "high", summary: "s" });
+    const escalation = await confirmEscalation({ customer_id: "CUS-1003", category: "account", reason: "r" });
     expect(escalation).toMatchObject({ status: "open" });
     const { data: ticket } = await supabase.from("support_tickets").select("customer_id").eq("conversation_id", context.conversationId).eq("category", "payment").single();
     const { data: esc } = await supabase.from("escalations").select("customer_id, user_name, user_email").eq("conversation_id", context.conversationId).single();
@@ -120,20 +144,44 @@ describe("account binding - a caller only ever sees their own records", () => {
 });
 
 describe("create_support_ticket", () => {
+  it("proposes first and only creates after a matching confirmation on a later turn", async () => {
+    const details = { category: "payment", priority: "high", summary: "Payout PAY-7001 has not arrived." };
+    const proposal = await createSupportTicket(context, details) as { confirmation_required: true; confirmation_key: string };
+    expect(proposal.confirmation_required).toBe(true);
+    expect(proposal.confirmation_key).toEqual(expect.any(String));
+    expect((await supabase.from("support_tickets").select("id", { count: "exact", head: true }).eq("conversation_id", context.conversationId)).count).toBe(0);
+
+    expect(await createSupportTicket(context, { ...details, confirmed: true, confirmation_key: proposal.confirmation_key })).toMatchObject({ refused: true, reason: "confirmation_must_follow_proposal" });
+    await advanceTurn();
+    expect(await createSupportTicket(context, { ...details, summary: "Changed details", confirmed: true, confirmation_key: proposal.confirmation_key })).toMatchObject({ refused: true, reason: "proposal_mismatch" });
+
+    const created = await createSupportTicket(context, { ...details, confirmed: true, confirmation_key: proposal.confirmation_key });
+    expect(created).toMatchObject({ status: "open", ticket_id: expect.any(String) });
+    const retried = await createSupportTicket(context, { ...details, confirmed: true, confirmation_key: proposal.confirmation_key });
+    expect(retried).toEqual(created);
+  });
+
+  it("refuses a confirmation that has no matching proposal", async () => {
+    expect(await createSupportTicket(context, { category: "other", priority: "medium", summary: "Help", confirmed: true, confirmation_key: "missing" })).toMatchObject({ refused: true, reason: "proposal_not_found" });
+  });
+
   it("creates a ticket and returns it open", async () => {
-    const result = await createSupportTicket(context, { category: "payment", priority: "medium", summary: "Caller asked about a delayed payout." });
+    const result = await confirmTicket({ category: "payment", priority: "medium", summary: "Caller asked about a delayed payout." });
     expect(result).toMatchObject({ status: "open" });
   });
 
   it("is idempotent per conversation and category - a repeat returns the same ticket", async () => {
-    const first = await createSupportTicket(context, { category: "payment", priority: "medium", summary: "First report." });
-    const second = await createSupportTicket(context, { category: "payment", priority: "high", summary: "Same issue, mentioned again." });
+    const details = { category: "payment", priority: "medium", summary: "First report." };
+    const proposal = await createSupportTicket(context, details) as { confirmation_key: string };
+    await advanceTurn();
+    const first = await createSupportTicket(context, { ...details, confirmed: true, confirmation_key: proposal.confirmation_key });
+    const second = await createSupportTicket(context, { ...details, confirmed: true, confirmation_key: proposal.confirmation_key });
     expect("ticket_id" in first && "ticket_id" in second && first.ticket_id === second.ticket_id).toBe(true);
   });
 
   it("allows a different category to open its own ticket in the same conversation", async () => {
-    const a = await createSupportTicket(context, { category: "payment", priority: "medium", summary: "Payment issue." });
-    const b = await createSupportTicket(context, { category: "dispute", priority: "medium", summary: "Separate dispute." });
+    const a = await confirmTicket({ category: "payment", priority: "medium", summary: "Payment issue." });
+    const b = await confirmTicket({ category: "dispute", priority: "medium", summary: "Separate dispute." });
     expect("ticket_id" in a && "ticket_id" in b && a.ticket_id !== b.ticket_id).toBe(true);
   });
 
@@ -149,6 +197,24 @@ describe("create_support_ticket", () => {
 });
 
 describe("create_escalation", () => {
+  it("reads back the full callback details and books only after later confirmation", async () => {
+    const details = { user_name: "A", user_email: "a@example.com", category: "other", reason: "Needs a specialist.", preferred_time: "2026-10-05T14:00:00+01:00" };
+    const proposal = await createEscalation(context, details) as { confirmation_required: true; confirmation_key: string; confirmation_summary: string };
+    expect(proposal).toMatchObject({ confirmation_required: true, confirmation_key: expect.any(String), confirmation_summary: expect.stringContaining("Monday, October 5 at 2:00 PM WAT") });
+    expect((await supabase.from("escalations").select("id", { count: "exact", head: true }).eq("conversation_id", context.conversationId)).count).toBe(0);
+    await advanceTurn();
+    expect(await createEscalation(context, { ...details, confirmed: true, confirmation_key: proposal.confirmation_key })).toMatchObject({ status: "open", follow_up_summary: expect.stringContaining("Monday, October 5 at 2:00 PM WAT") });
+  });
+
+  it.each([
+    ["2026-10-05T08:30:00+01:00", "outside_business_hours"],
+    ["2026-10-03T10:00:00+01:00", "weekend"],
+    ["2026-10-01T10:00:00+01:00", "past_time"],
+    ["2026-10-05T10:00:00", "invalid_time"],
+  ])("refuses invalid callback slot %s", async (preferred_time, reason) => {
+    expect(await createEscalation(context, { user_name: "A", user_email: "a@example.com", category: "other", reason: "r", preferred_time })).toMatchObject({ refused: true, reason });
+  });
+
   it("enforces exact and partial callback overlaps atomically without orphan tickets", async () => {
     const extraConversationIds: string[] = [];
     const createConversation = async () => {
@@ -196,7 +262,7 @@ describe("create_escalation", () => {
   });
 
   it("creates an escalation, a linked ticket, and a follow_up_summary", async () => {
-    const result = await createEscalation(context, {
+    const result = await confirmEscalation({
       user_name: "Test Caller",
       user_email: "caller@example.com",
       category: "dispute",
@@ -206,8 +272,8 @@ describe("create_escalation", () => {
   });
 
   it("is idempotent per conversation - a repeat returns the existing open escalation", async () => {
-    const first = await createEscalation(context, { user_name: "A", user_email: "a@example.com", category: "account", reason: "r1" });
-    const second = await createEscalation(context, { user_name: "A", user_email: "a@example.com", category: "account", reason: "r2, mentioned again" });
+    const first = await confirmEscalation({ user_name: "A", user_email: "a@example.com", category: "account", reason: "r1" });
+    const second = await confirmEscalation({ user_name: "A", user_email: "a@example.com", category: "account", reason: "r2, mentioned again" });
     expect("escalation_id" in first && "escalation_id" in second && first.escalation_id === second.escalation_id).toBe(true);
   });
 
@@ -222,14 +288,14 @@ describe("create_escalation", () => {
   });
 
   it("books a call only when a preferred_time is given", async () => {
-    const preferredTime = "2026-10-01T10:00:00.000Z";
-    const booked = await createEscalation(context, { user_name: "A", user_email: "a@example.com", category: "other", reason: "r", preferred_time: preferredTime });
-    expect("follow_up_summary" in booked && booked.follow_up_summary).toContain(preferredTime);
+    const preferredTime = "2026-10-06T10:00:00+01:00";
+    const booked = await confirmEscalation({ user_name: "A", user_email: "a@example.com", category: "other", reason: "r", preferred_time: preferredTime });
+    expect("follow_up_summary" in booked && booked.follow_up_summary).toContain("Tuesday, October 6 at 10:00 AM WAT");
   });
 
   it("refuses a preferred_time that isn't a machine-readable timestamp - callback_time is timestamptz, not free text", async () => {
     const result = await createEscalation(context, { user_name: "A", user_email: "a@example.com", category: "other", reason: "r", preferred_time: "tomorrow 10am" });
-    expect(result).toMatchObject({ refused: true, reason: "invalid_preferred_time" });
+    expect(result).toMatchObject({ refused: true, reason: "invalid_time" });
     expect((result as { hint?: string }).hint).toMatch(/ISO-8601/);
   });
 });

@@ -1,24 +1,18 @@
 // create_escalation (SYSTEM-DESIGN.md §5, escalation-rules.md).
 //
-// Idempotent per conversation (migration 003's partial unique index,
-// `escalations_open_unique`) - a repeat inside the same open escalation
-// returns the existing record rather than erroring. The existing-escalation
-// check runs *before* any ticket is created: creating a ticket on every
-// call, even a repeat, would itself collide with support_tickets' own
-// per-(conversation, category) uniqueness the moment two escalation calls
-// in the same conversation shared a category - caught live by this file's
-// own idempotency test failing with "duplicate key value violates unique
-// constraint support_tickets_open_unique" before this reordering.
+// Proposal-first: the first call persists a read-back proposal only. A
+// matching call on a later turn, carrying the proposal key, performs the
+// write through the voice-support reliability migration's atomic RPC. The RPC owns idempotency,
+// ticket linking and callback collision handling as one transaction.
 //
 // `call_booked` isn't one of the PRD's own tool inputs, so it's derived
 // from whether a `preferred_time` was given, which is the only signal that
 // exists. `callback_time` is `timestamptz` (migration 003) - `preferred_time`
 // must be an ISO-8601 timestamp, not caller-spoken text like "tomorrow
 // 10am" (also caught live: Postgres rejected that as an invalid timestamp).
-// Converting relative spoken time into an absolute one is the model's job,
-// with the current date/time in its system prompt context (Task 6) - the
-// tool's contract is the machine-readable form, refused rather than passed
-// through raw if it isn't one.
+// Converting relative spoken time into an absolute one is the model's job;
+// this boundary still rejects malformed, past, weekend and out-of-hours
+// slots deterministically before asking the caller to confirm.
 //
 // When no `ticket_id` is supplied, one is created and linked ("creates or
 // links a ticket", SYSTEM-DESIGN.md §5) at `high` priority - an escalation
@@ -27,6 +21,8 @@ import type { ToolContext } from "../context";
 import { isCategory } from "./categories";
 import { verifiedCustomerId } from "./verification";
 import { newEscalationMessage, sendDiscordAlert } from "../../notify/discord";
+import { formatCallbackSlot, validateCallbackSlot } from "../callback-policy";
+import { confirmSupportAction, proposeSupportAction, type ConfirmationRefusal } from "./support-action-confirmation";
 
 export interface CreateEscalationInput {
   ticket_id?: string;
@@ -37,30 +33,44 @@ export interface CreateEscalationInput {
   category: string;
   reason: string;
   preferred_time?: string;
+  confirmed?: boolean;
+  confirmation_key?: string;
 }
 
 export type CreateEscalationResult =
-  | { refused: true; reason: "missing_name" | "invalid_email" | "invalid_category" | "invalid_preferred_time"; hint?: string }
+  | { refused: true; reason: "missing_name" | "invalid_email" | "invalid_category" | "invalid_time" | "past_time" | "weekend" | "outside_business_hours"; hint?: string }
+  | ConfirmationRefusal
+  | { refused: true; reason: "slot_unavailable"; suggested_times: Array<{ iso: string; label: string }> }
+  | { confirmation_required: true; confirmation_key: string; confirmation_summary: string }
   | { escalation_id: string; status: "open"; follow_up_summary: string };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const UNIQUE_VIOLATION = "23505";
 
 function followUpSummary(preferredTime: string | undefined): string {
   return preferredTime
-    ? `A specialist will follow up by email and call at ${preferredTime}.`
+    ? `A specialist will follow up by email and call on ${formatCallbackSlot(preferredTime)}.`
     : "A specialist will follow up by email within 1 business day.";
 }
 
-async function existingOpenEscalation(context: ToolContext): Promise<{ id: string } | null> {
+async function nearbyAvailableSlots(context: ToolContext, preferredTime: string): Promise<Array<{ iso: string; label: string }>> {
   const { data, error } = await context.supabase
     .from("escalations")
-    .select("id")
-    .eq("conversation_id", context.conversationId)
-    .eq("status", "open")
-    .maybeSingle();
+    .select("callback_time")
+    .eq("call_booked", true)
+    .in("status", ["open", "in_progress"])
+    .not("callback_time", "is", null);
   if (error) throw error;
-  return data;
+  const occupied = (data ?? []).map((row) => Date.parse(row.callback_time as string));
+  const suggestions: Array<{ iso: string; label: string }> = [];
+  let candidateMs = Date.parse(preferredTime) + 30 * 60_000;
+  for (let attempts = 0; attempts < 336 && suggestions.length < 3; attempts++, candidateMs += 30 * 60_000) {
+    const candidate = new Date(candidateMs);
+    const iso = candidate.toISOString();
+    if (!validateCallbackSlot(iso).ok) continue;
+    if (occupied.some((start) => Math.abs(start - candidateMs) < 30 * 60_000)) continue;
+    suggestions.push({ iso, label: formatCallbackSlot(iso) });
+  }
+  return suggestions;
 }
 
 export async function createEscalation(context: ToolContext, rawInput: CreateEscalationInput): Promise<CreateEscalationResult> {
@@ -75,59 +85,58 @@ export async function createEscalation(context: ToolContext, rawInput: CreateEsc
     customer_id: customerId ?? undefined,
     user_name: rawInput.user_name?.trim() || account?.data?.contact_name || "",
     user_email: rawInput.user_email?.trim() || account?.data?.contact_email || "",
+    reason: rawInput.reason.trim(),
   };
   if (!input.user_name) return { refused: true, reason: "missing_name" };
   if (!EMAIL_RE.test(input.user_email)) return { refused: true, reason: "invalid_email" };
   if (!isCategory(input.category)) return { refused: true, reason: "invalid_category" };
-  if (input.preferred_time !== undefined && Number.isNaN(Date.parse(input.preferred_time))) {
-    return { refused: true, reason: "invalid_preferred_time", hint: "Retry with preferred_time as an ISO-8601 timestamp with an offset, e.g. 2026-10-01T10:00:00+01:00, converted from what the caller said using the current date in your instructions." };
+  if (input.preferred_time !== undefined) {
+    const validation = validateCallbackSlot(input.preferred_time);
+    if (!validation.ok) {
+      return { refused: true, reason: validation.reason, hint: "Callbacks are available Monday to Friday, 9:00 AM to 3:00 PM WAT, in 30-minute slots. Supply an ISO-8601 timestamp with an explicit offset." };
+    }
   }
 
-  const existing = await existingOpenEscalation(context);
-  if (existing) return { escalation_id: existing.id, status: "open", follow_up_summary: followUpSummary(input.preferred_time) };
-
-  let ticketId = input.ticket_id ?? null;
-  if (!ticketId) {
-    const { data: ticket, error: ticketError } = await context.supabase
-      .from("support_tickets")
-      .insert({
-        conversation_id: context.conversationId,
-        customer_id: input.customer_id ?? null,
-        category: input.category,
-        priority: "high",
-        summary: input.reason,
-      })
-      .select("id")
-      .single();
-    if (ticketError) throw ticketError;
-    ticketId = ticket.id;
+  const payload = {
+    ticket_id: input.ticket_id ?? null,
+    customer_id: input.customer_id ?? null,
+    user_name: input.user_name,
+    user_email: input.user_email,
+    category: input.category,
+    reason: input.reason,
+    preferred_time: input.preferred_time ?? null,
+  };
+  const kind = input.preferred_time ? "booking" as const : "escalation" as const;
+  if (!input.confirmed) {
+    const timing = input.preferred_time ? ` Callback: ${formatCallbackSlot(input.preferred_time)}.` : " Follow-up will be by email within one business day.";
+    return proposeSupportAction(context, {
+      kind,
+      payload,
+      confirmationSummary: `Create a ${input.category} escalation: ${input.reason}.${timing}`,
+    });
   }
+  const confirmation = await confirmSupportAction(context, input.confirmation_key, kind, payload);
+  if ("refused" in confirmation) return confirmation;
 
-  const callBooked = Boolean(input.preferred_time);
-  const { data, error } = await context.supabase
-    .from("escalations")
-    .insert({
-      ticket_id: ticketId,
-      conversation_id: context.conversationId,
-      customer_id: input.customer_id ?? null,
-      user_name: input.user_name,
-      user_email: input.user_email,
-      category: input.category,
-      reason: input.reason,
-      call_booked: callBooked,
-      callback_time: input.preferred_time ?? null,
-    })
-    .select("id")
-    .single();
+  const { data, error } = await context.supabase.rpc("create_confirmed_escalation", {
+    p_conversation_id: context.conversationId,
+    p_customer_id: input.customer_id ?? null,
+    p_user_name: input.user_name,
+    p_user_email: input.user_email,
+    p_category: input.category,
+    p_reason: input.reason,
+    p_callback_time: input.preferred_time ?? null,
+    p_ticket_id: input.ticket_id ?? null,
+  });
+  if (error) throw error;
+  const result = (data as Array<{ outcome: "created" | "existing" | "slot_unavailable"; escalation_id: string | null }>)[0];
+  if (!result) throw new Error("create_confirmed_escalation returned no result");
 
-  if (!error) {
+  if (result.outcome === "slot_unavailable") {
+    return { refused: true, reason: "slot_unavailable", suggested_times: await nearbyAvailableSlots(context, input.preferred_time!) };
+  }
+  if (result.outcome === "created") {
     await sendDiscordAlert(newEscalationMessage({ conversationId: context.conversationId, category: input.category, callbackTime: input.preferred_time ?? null, customerId: input.customer_id ?? null }));
-    return { escalation_id: data.id, status: "open", follow_up_summary: followUpSummary(input.preferred_time) };
   }
-  if (error.code !== UNIQUE_VIOLATION) throw error;
-
-  // A race with another call for the same conversation - fall back to the same lookup.
-  const raced = await existingOpenEscalation(context);
-  if (!raced) throw error;
-  return { escalation_id: raced.id, status: "open", follow_up_summary: followUpSummary(input.preferred_time) };
+  return { escalation_id: result.escalation_id!, status: "open", follow_up_summary: followUpSummary(input.preferred_time) };
 }

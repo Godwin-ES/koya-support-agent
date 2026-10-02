@@ -11,4 +11,5 @@ export * from "./tools/lookup-payout";
 export * from "./tools/list-account-activity";
 export * from "./tools/create-support-ticket";
 export * from "./tools/create-escalation";
+export * from "./tools/support-action-confirmation";
 export * from "./tools/log-conversation-event";

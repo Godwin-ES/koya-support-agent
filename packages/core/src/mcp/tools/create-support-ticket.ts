@@ -10,26 +10,51 @@ import type { ToolContext } from "../context";
 import { isCategory, isPriority } from "./categories";
 import { verifiedCustomerId } from "./verification";
 import { newTicketMessage, sendDiscordAlert } from "../../notify/discord";
+import { confirmSupportAction, proposeSupportAction, type ConfirmationRefusal } from "./support-action-confirmation";
 
 export interface CreateSupportTicketInput {
   customer_id?: string;
   category: string;
   priority: string;
   summary: string;
+  confirmed?: boolean;
+  confirmation_key?: string;
 }
 
-export type CreateSupportTicketResult = { refused: true; reason: "invalid_category" | "invalid_priority" } | { ticket_id: string; status: "open" };
+export type CreateSupportTicketResult =
+  | { refused: true; reason: "invalid_category" | "invalid_priority" }
+  | ConfirmationRefusal
+  | { confirmation_required: true; confirmation_key: string; confirmation_summary: string }
+  | { ticket_id: string; status: "open" };
 
 const UNIQUE_VIOLATION = "23505";
 
 const ALERTING_PRIORITIES = new Set(["high", "urgent"]);
 
-/** `notify: false` for callers that already send their own alert about the same event (the failed-turn fallback). */
-export async function createSupportTicket(context: ToolContext, input: CreateSupportTicketInput, options: { notify?: boolean } = {}): Promise<CreateSupportTicketResult> {
+/** `systemFailure` is an internal-only emergency path and is never exposed by the MCP schema. */
+export async function createSupportTicket(
+  context: ToolContext,
+  rawInput: CreateSupportTicketInput,
+  options: { notify?: boolean; systemFailure?: boolean } = {},
+): Promise<CreateSupportTicketResult> {
+  const input = { ...rawInput, summary: rawInput.summary.trim() };
   if (!isCategory(input.category)) return { refused: true, reason: "invalid_category" };
   if (!isPriority(input.priority)) return { refused: true, reason: "invalid_priority" };
   // Always the conversation's own customer, never one the model names.
   const customerId = await verifiedCustomerId(context);
+
+  if (!options.systemFailure) {
+    const payload = { category: input.category, priority: input.priority, summary: input.summary };
+    if (!input.confirmed) {
+      return proposeSupportAction(context, {
+        kind: "ticket",
+        payload,
+        confirmationSummary: `Create a ${input.priority}-priority ${input.category} support ticket: ${input.summary}`,
+      });
+    }
+    const confirmation = await confirmSupportAction(context, input.confirmation_key, "ticket", payload);
+    if ("refused" in confirmation) return confirmation;
+  }
 
   const { data, error } = await context.supabase
     .from("support_tickets")

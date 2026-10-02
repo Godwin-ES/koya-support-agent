@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decideTurn } from "@core/agent/decision";
 import type { AnswerType } from "@core/agent/decision";
+import { buildSystemPrompt } from "@core/agent/system-prompt";
 
 describe("decideTurn", () => {
   it("uses the agent's own declared decision when present, marking it not inferred", () => {
@@ -63,5 +64,17 @@ describe("decideTurn", () => {
     expect(result.answer_type).toBe("clarify");
     expect(result.confidence).toBeNull();
     expect(result.confidence_note).toContain("inferred");
+  });
+});
+
+describe("support action instructions", () => {
+  it("requires a later explicit confirmation with complete callback details", () => {
+    const prompt = buildSystemPrompt(new Date("2026-10-02T12:00:00+01:00"));
+    expect(prompt).toContain("Monday through Friday from 9 AM to 3 PM West Africa Time");
+    expect(prompt).toContain("If AM/PM is missing, always ask which they mean");
+    expect(prompt).toContain("confirmation_key");
+    expect(prompt).toContain("exactly the same details");
+    expect(prompt).toContain("Do not use holding phrases or filler");
+    expect(prompt).not.toContain("don't ask them to confirm the time first");
   });
 });

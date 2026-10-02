@@ -104,25 +104,27 @@ export function createServer(context: ToolContext): McpServer {
   server.registerTool(
     "create_support_ticket",
     {
-      description: "Log a specific problem for the support team to investigate (e.g. a failed payment or invoice payment, with its reference). Idempotent per conversation and category.",
+      description: "Propose, then after the caller explicitly confirms on a later turn, create a support ticket. The first call returns a confirmation key and creates no ticket.",
       inputSchema: {
         customer_id: z.string().optional(),
         category: z.string().describe('Exactly one of: "compliance", "account", "dispute", "payment", "other".'),
         priority: z.string().describe('Exactly one of: "low", "medium", "high", "urgent".'),
         summary: z.string().min(1),
+        confirmed: z.boolean().optional().describe("Set true only after the caller explicitly accepted the complete proposal on a later turn."),
+        confirmation_key: z.string().optional().describe("The exact key returned by the earlier matching proposal."),
         conversation_id: z.string().optional(),
       },
     },
     async (input) => textResult(await callWithLogging<CreateSupportTicketResult | typeof REFUSED_CONVERSATION_MISMATCH>(context, "create_support_ticket", "log an issue for support follow-up", input, async () => {
       if (!matchesConversation(context, input.conversation_id)) return { status: "refused", result: REFUSED_CONVERSATION_MISMATCH };
       const result = await createSupportTicket(context, input);
-      return { status: "refused" in result ? "refused" : "ok", result };
+      return { status: "refused" in result || "confirmation_required" in result ? "refused" : "ok", result };
     })),
   );
   server.registerTool(
     "create_escalation",
     {
-      description: "Hand off to human support - only for account access or restriction, compliance or identity verification, disputes, refunds or cancellations, frustrated or urgent callers, or anything needing human judgment. Idempotent per conversation.",
+      description: "Propose, then after explicit caller confirmation on a later turn, create a human escalation or callback booking. The first call returns a confirmation key and creates nothing.",
       inputSchema: {
         ticket_id: z.string().optional(),
         customer_id: z.string().optional(),
@@ -131,11 +133,13 @@ export function createServer(context: ToolContext): McpServer {
         category: z.string().describe('Exactly one of: "compliance", "account", "dispute", "payment", "other". KYC and identity-verification reviews are "compliance".'),
         reason: z.string().min(1),
         preferred_time: z.string().optional().describe("The callback time the caller asked for, as ISO-8601 with an offset (e.g. 2026-10-01T10:00:00+01:00). Required whenever the caller gave a time."),
+        confirmed: z.boolean().optional().describe("Set true only after the caller explicitly accepted the complete proposal on a later turn."),
+        confirmation_key: z.string().optional().describe("The exact key returned by the earlier matching proposal."),
       },
     },
     async (input) => textResult(await callWithLogging(context, "create_escalation", "hand the caller off to human support", input, async () => {
       const result = await createEscalation(context, input);
-      return { status: "refused" in result ? "refused" : "ok", result };
+      return { status: "refused" in result || "confirmation_required" in result ? "refused" : "ok", result };
     })),
   );
 

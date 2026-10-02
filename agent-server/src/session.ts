@@ -434,7 +434,11 @@ export class Session {
     const fallbackText = isMcp ? MCP_DOWN_FALLBACK : CLAUDE_DOWN_FALLBACK;
     yield { kind: "delta", text: fallbackText };
 
-    await createSupportTicket(this.toolContext, { category: "other", priority: "urgent", summary: `A turn failed mid-conversation: ${failure.message}` }, { notify: false }).catch(() => undefined);
+    await createSupportTicket(
+      this.toolContext,
+      { category: "other", priority: "urgent", summary: `A turn failed mid-conversation: ${failure.message}` },
+      { notify: false, systemFailure: true },
+    ).catch(() => undefined);
 
     const seq = await currentTurnSeq(this.toolContext).catch(() => 0);
     await this.writeBuffer
